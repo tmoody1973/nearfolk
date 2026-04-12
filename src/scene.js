@@ -21,6 +21,7 @@ import {
 } from './state.js';
 import { PIECE_FACTORIES } from './pieces/index.js';
 import { computeScore } from './scoring.js';
+import { createResident, resetResidentPool } from './residents.js';
 
 export function createScene() {
   // ─── State ───
@@ -28,6 +29,10 @@ export function createScene() {
 
   // Map piece IDs to Three.js groups for removal
   const meshMap = new Map();
+
+  // Residents: array of resident objects + map to meshes
+  let residents = [];
+  const residentMeshMap = new Map();
 
   const scene = new Scene();
   scene.background = new Color(0xf5efe6);
@@ -281,6 +286,8 @@ export function createScene() {
   });
 
   // ─── Mouse events ───
+  const tooltipEl = document.getElementById('resident-tooltip');
+
   window.addEventListener('mousemove', (e) => {
     const cell = cellFromMouse(e);
     if (cell) {
@@ -288,13 +295,83 @@ export function createScene() {
       hoverCell.z = cell.z;
       highlight.position.set(cell.x - halfGrid + 0.5, 0.02, cell.z - halfGrid + 0.5);
       highlight.visible = true;
+
+      // Show resident tooltip if hovering a cottage
+      const pieceId = state.grid[cell.x][cell.z];
+      const resident = pieceId ? residents.find(r => r.cottageId === pieceId) : null;
+      if (resident) {
+        tooltipEl.innerHTML = `
+          <div class="tooltip-name">${resident.trait.icon} ${resident.name}</div>
+          <div class="tooltip-trait">${resident.trait.name}: ${resident.trait.description}</div>
+        `;
+        tooltipEl.style.display = 'block';
+        tooltipEl.style.left = (e.clientX + 16) + 'px';
+        tooltipEl.style.top = (e.clientY - 10) + 'px';
+      } else {
+        tooltipEl.style.display = 'none';
+      }
     } else {
       hoverCell.x = -1;
       hoverCell.z = -1;
       highlight.visible = false;
+      tooltipEl.style.display = 'none';
     }
     updatePreview();
   });
+
+  // ─── Resident mesh factory ───
+  function createResidentMesh(resident) {
+    const group = new Group();
+    const body = new Mesh(
+      new BoxGeometry(0.2, 0.4, 0.2),
+      new MeshLambertMaterial({ color: resident.bodyColor, flatShading: true })
+    );
+    body.position.y = 0.3;
+    body.castShadow = true;
+    group.add(body);
+
+    const head = new Mesh(
+      new BoxGeometry(0.15, 0.15, 0.15),
+      new MeshLambertMaterial({ color: resident.accentColor, flatShading: true })
+    );
+    head.position.y = 0.58;
+    head.castShadow = true;
+    group.add(head);
+
+    group.userData.residentId = resident.id;
+    group.userData.residentName = resident.name;
+    group.userData.traitName = resident.trait.name;
+    group.userData.traitIcon = resident.trait.icon;
+    return group;
+  }
+
+  function spawnResident(cottageId, cottageX, cottageZ) {
+    const resident = createResident(cottageId, residents);
+    residents = [...residents, resident];
+
+    const mesh = createResidentMesh(resident);
+    const size = PIECE_SIZES.COTTAGE;
+    // Stand on the porch side of the cottage
+    mesh.position.set(
+      cottageX - halfGrid + size.w / 2,
+      0,
+      cottageZ - halfGrid + size.h / 2 + 0.5
+    );
+    scene.add(mesh);
+    residentMeshMap.set(resident.id, mesh);
+    return resident;
+  }
+
+  function despawnResident(cottageId) {
+    const resident = residents.find(r => r.cottageId === cottageId);
+    if (!resident) return;
+    const mesh = residentMeshMap.get(resident.id);
+    if (mesh) {
+      scene.remove(mesh);
+      residentMeshMap.delete(resident.id);
+    }
+    residents = residents.filter(r => r.id !== resident.id);
+  }
 
   // Left-click: place piece
   window.addEventListener('click', (e) => {
@@ -310,13 +387,18 @@ export function createScene() {
     state = placePiece(state, type, x, z, rotation);
     const placed = state.pieces[state.pieces.length - 1];
 
-    // Create mesh
+    // Create piece mesh
     const mesh = PIECE_FACTORIES[type]();
     mesh.rotation.y = (rotation * Math.PI) / 180;
     const size = PIECE_SIZES[type];
     mesh.position.set(x - halfGrid + size.w / 2, 0, z - halfGrid + size.h / 2);
     scene.add(mesh);
     meshMap.set(placed.id, mesh);
+
+    // Spawn resident if cottage
+    if (type === 'COTTAGE') {
+      spawnResident(placed.id, x, z);
+    }
 
     updatePreview();
     updateUI();
@@ -329,6 +411,12 @@ export function createScene() {
 
     const pieceId = state.grid[hoverCell.x][hoverCell.z];
     if (pieceId === null) return;
+
+    // Despawn resident if cottage
+    const piece = state.pieces.find(p => p.id === pieceId);
+    if (piece && piece.type === 'COTTAGE') {
+      despawnResident(pieceId);
+    }
 
     const mesh = meshMap.get(pieceId);
     if (mesh) {
@@ -405,9 +493,17 @@ export function createScene() {
     }
     meshMap.clear();
 
+    // Remove all resident meshes
+    for (const [id, mesh] of residentMeshMap) {
+      scene.remove(mesh);
+    }
+    residentMeshMap.clear();
+    residents = [];
+    resetResidentPool();
+
     state = newState;
 
-    // Recreate all meshes
+    // Recreate all piece meshes + residents
     for (const piece of state.pieces) {
       const mesh = PIECE_FACTORIES[piece.type]();
       mesh.rotation.y = (piece.rotation * Math.PI) / 180;
@@ -418,6 +514,10 @@ export function createScene() {
       );
       scene.add(mesh);
       meshMap.set(piece.id, mesh);
+
+      if (piece.type === 'COTTAGE') {
+        spawnResident(piece.id, piece.x, piece.z);
+      }
     }
     updatePreview();
     updateUI();
@@ -528,6 +628,20 @@ export function createScene() {
         -webkit-tap-highlight-color: transparent;
       }
       .mobile-btn:active { background: rgba(139, 107, 74, 0.3); }
+      #resident-tooltip {
+        position: absolute;
+        pointer-events: none;
+        background: rgba(240, 228, 208, 0.92);
+        border-radius: 8px;
+        padding: 6px 10px;
+        font-size: 0.8rem;
+        font-weight: 600;
+        white-space: nowrap;
+        display: none;
+        box-shadow: 0 2px 8px rgba(107, 78, 58, 0.15);
+      }
+      .tooltip-name { font-family: 'Lora', serif; font-size: 0.9rem; }
+      .tooltip-trait { opacity: 0.7; font-size: 0.7rem; margin-top: 2px; }
       @media (min-width: 769px) {
         #mobile-controls { display: none; }
       }
@@ -544,6 +658,7 @@ export function createScene() {
       <button class="mobile-btn" id="btn-orbit-r" title="Orbit right">E</button>
       <button class="mobile-btn" id="btn-undo" title="Undo">↩</button>
     </div>
+    <div id="resident-tooltip"></div>
     <div id="controls-hint">Click place · R rotate · T rotate placed · Right-click remove · Q/E orbit · Scroll zoom · Ctrl+Z undo</div>
   `;
   document.body.appendChild(uiContainer);
@@ -739,34 +854,6 @@ export function createScene() {
   // Deactivate keyboard nav when mouse moves
   window.addEventListener('mousemove', () => { keyboardActive = false; }, { once: false });
 
-  // ─── Resident (demo walker) ───
-  const residentGroup = new Group();
-  const body = new Mesh(
-    new BoxGeometry(0.2, 0.4, 0.2),
-    new MeshLambertMaterial({ color: 0xc97a5c, flatShading: true })
-  );
-  body.position.y = 0.3;
-  body.castShadow = true;
-  residentGroup.add(body);
-
-  const head = new Mesh(
-    new BoxGeometry(0.15, 0.15, 0.15),
-    new MeshLambertMaterial({ color: 0xf0e4d0, flatShading: true })
-  );
-  head.position.y = 0.58;
-  head.castShadow = true;
-  residentGroup.add(head);
-
-  residentGroup.position.set(0, 0, 2);
-  scene.add(residentGroup);
-
-  const walkPath = [
-    new Vector3(0, 0, 2), new Vector3(2, 0, 2),
-    new Vector3(2, 0, -1), new Vector3(0, 0, -1),
-  ];
-  let walkIndex = 0;
-  let walkProgress = 0;
-
   // ─── Animation loop ───
   const startTime = performance.now();
 
@@ -793,16 +880,10 @@ export function createScene() {
       line.material.opacity = 0.3 + Math.sin(elapsed * 2) * 0.15;
     }
 
-    // Resident walk
-    const from = walkPath[walkIndex];
-    const to = walkPath[(walkIndex + 1) % walkPath.length];
-    walkProgress += 0.5 * 0.016;
-    if (walkProgress >= 1) {
-      walkProgress = 0;
-      walkIndex = (walkIndex + 1) % walkPath.length;
+    // Resident idle bob (all spawned residents breathe gently)
+    for (const [id, mesh] of residentMeshMap) {
+      mesh.position.y = Math.sin(elapsed * 2 + mesh.position.x * 3) * 0.03;
     }
-    residentGroup.position.lerpVectors(from, to, walkProgress);
-    residentGroup.position.y = Math.sin(elapsed * 8) * 0.05;
 
     composer.render();
   }
