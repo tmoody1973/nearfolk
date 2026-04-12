@@ -22,6 +22,7 @@ import {
 import { PIECE_FACTORIES } from './pieces/index.js';
 import { computeScore } from './scoring.js';
 import { createResident, resetResidentPool } from './residents.js';
+import { createSettleController } from './settle.js';
 
 export function createScene() {
   // ─── State ───
@@ -33,6 +34,10 @@ export function createScene() {
   // Residents: array of resident objects + map to meshes
   let residents = [];
   const residentMeshMap = new Map();
+
+  // Settle state
+  let settleController = null;
+  let isSettling = false;
 
   const scene = new Scene();
   scene.background = new Color(0xf5efe6);
@@ -76,7 +81,8 @@ export function createScene() {
   document.body.appendChild(renderer.domElement);
 
   // ─── Lights ───
-  scene.add(new AmbientLight(0xffe8cc, 0.4));
+  const ambient = new AmbientLight(0xffe8cc, 0.4);
+  scene.add(ambient);
 
   const key = new DirectionalLight(0xfff4e0, 1.0);
   key.position.set(10, 15, 8);
@@ -251,9 +257,16 @@ export function createScene() {
     mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
     mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
     raycaster.setFromCamera(mouse, camera);
-    const hits = raycaster.intersectObject(ground);
-    if (hits.length === 0) return null;
-    const p = hits[0].point;
+
+    // Try ground first, then all scene objects
+    const groundHits = raycaster.intersectObject(ground);
+    const allHits = raycaster.intersectObjects(scene.children, true);
+
+    // Use ground hit if available, otherwise use closest scene hit
+    const hit = groundHits[0] || allHits[0];
+    if (!hit) return null;
+
+    const p = hit.point;
     const cx = Math.floor(p.x + halfGrid);
     const cz = Math.floor(p.z + halfGrid);
     if (cx < 0 || cx >= GRID_SIZE || cz < 0 || cz >= GRID_SIZE) return null;
@@ -345,18 +358,20 @@ export function createScene() {
     return group;
   }
 
-  function spawnResident(cottageId, cottageX, cottageZ) {
+  function spawnResident(cottageId, cottageX, cottageZ, rotation = 0) {
     const resident = createResident(cottageId, residents);
     residents = [...residents, resident];
 
     const mesh = createResidentMesh(resident);
     const size = PIECE_SIZES.COTTAGE;
-    // Stand on the porch side of the cottage
-    mesh.position.set(
-      cottageX - halfGrid + size.w / 2,
-      0,
-      cottageZ - halfGrid + size.h / 2 + 0.5
-    );
+    const cx = cottageX - halfGrid + size.w / 2;
+    const cz = cottageZ - halfGrid + size.h / 2;
+
+    // Place resident OUTSIDE the cottage on the porch side
+    const dir = { 0: { dx: 0, dz: 1.3 }, 90: { dx: 1.3, dz: 0 }, 180: { dx: 0, dz: -1.3 }, 270: { dx: -1.3, dz: 0 } };
+    const offset = dir[rotation] || dir[0];
+    mesh.position.set(cx + offset.dx, 0, cz + offset.dz);
+
     scene.add(mesh);
     residentMeshMap.set(resident.id, mesh);
     return resident;
@@ -376,6 +391,7 @@ export function createScene() {
   // Left-click: place piece
   window.addEventListener('click', (e) => {
     if (e.button !== 0) return;
+    if (isSettling) return; // Grid locked during settle
     if (hoverCell.x < 0) return;
     if (!canPlace(state, state.selectedType, hoverCell.x, hoverCell.z)) return;
 
@@ -397,7 +413,7 @@ export function createScene() {
 
     // Spawn resident if cottage
     if (type === 'COTTAGE') {
-      spawnResident(placed.id, x, z);
+      spawnResident(placed.id, x, z, rotation);
     }
 
     updatePreview();
@@ -516,7 +532,7 @@ export function createScene() {
       meshMap.set(piece.id, mesh);
 
       if (piece.type === 'COTTAGE') {
-        spawnResident(piece.id, piece.x, piece.z);
+        spawnResident(piece.id, piece.x, piece.z, piece.rotation);
       }
     }
     updatePreview();
@@ -628,6 +644,101 @@ export function createScene() {
         -webkit-tap-highlight-color: transparent;
       }
       .mobile-btn:active { background: rgba(139, 107, 74, 0.3); }
+      #settle-btn {
+        position: absolute;
+        bottom: 80px;
+        left: 50%;
+        transform: translateX(-50%);
+        background: rgba(201, 122, 92, 0.9);
+        color: #f5efe6;
+        border: none;
+        border-radius: 12px;
+        padding: 12px 32px;
+        font-family: 'Lora', serif;
+        font-size: 1.1rem;
+        font-weight: 700;
+        cursor: pointer;
+        pointer-events: auto;
+        transition: background 0.2s, transform 0.15s;
+        display: none;
+      }
+      #settle-btn:hover { background: rgba(201, 122, 92, 1); transform: translateX(-50%) scale(1.05); }
+      #settle-btn.visible { display: block; }
+      #settle-btn.pulse {
+        animation: settlePulse 2s ease-in-out infinite;
+      }
+      @keyframes settlePulse {
+        0%, 100% { transform: translateX(-50%) scale(1); }
+        50% { transform: translateX(-50%) scale(1.08); }
+      }
+      #settle-btn:disabled { opacity: 0.5; cursor: default; pointer-events: none; }
+      #story-card {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        background: rgba(240, 228, 208, 0.95);
+        border-radius: 16px;
+        padding: 32px 40px;
+        max-width: 420px;
+        text-align: center;
+        pointer-events: auto;
+        box-shadow: 0 8px 32px rgba(107, 78, 58, 0.25);
+      }
+      #story-card.hidden { display: none; }
+      #story-beat-name {
+        font-family: 'Nunito', sans-serif;
+        font-size: 0.7rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+        opacity: 0.5;
+        margin-bottom: 8px;
+      }
+      #story-caption {
+        font-family: 'Lora', serif;
+        font-size: 1.1rem;
+        font-style: italic;
+        line-height: 1.6;
+        margin-bottom: 16px;
+      }
+      #story-score {
+        font-family: 'Lora', serif;
+        font-size: 2rem;
+        font-weight: 700;
+        margin-bottom: 16px;
+      }
+      #story-close {
+        background: rgba(139, 107, 74, 0.15);
+        border: none;
+        border-radius: 8px;
+        padding: 8px 24px;
+        font-family: 'Nunito', sans-serif;
+        font-size: 0.85rem;
+        font-weight: 600;
+        color: #6b4e3a;
+        cursor: pointer;
+      }
+      #story-close:hover { background: rgba(139, 107, 74, 0.25); }
+      #settle-progress {
+        position: absolute;
+        bottom: 60px;
+        left: 50%;
+        transform: translateX(-50%);
+        width: 200px;
+        height: 4px;
+        background: rgba(139, 107, 74, 0.15);
+        border-radius: 2px;
+        overflow: hidden;
+      }
+      #settle-progress.hidden { display: none; }
+      #settle-bar {
+        height: 100%;
+        background: rgba(201, 122, 92, 0.8);
+        border-radius: 2px;
+        width: 0%;
+        transition: width 0.1s linear;
+      }
       #resident-tooltip {
         position: absolute;
         pointer-events: none;
@@ -659,6 +770,16 @@ export function createScene() {
       <button class="mobile-btn" id="btn-undo" title="Undo">↩</button>
     </div>
     <div id="resident-tooltip"></div>
+    <button id="settle-btn">Settle</button>
+    <div id="story-card" class="hidden">
+      <div id="story-beat-name"></div>
+      <div id="story-caption"></div>
+      <div id="story-score"></div>
+      <button id="story-close">Continue</button>
+    </div>
+    <div id="settle-progress" class="hidden">
+      <div id="settle-bar"></div>
+    </div>
     <div id="controls-hint">Click place · R rotate · T rotate placed · Right-click remove · Q/E orbit · Scroll zoom · Ctrl+Z undo</div>
   `;
   document.body.appendChild(uiContainer);
@@ -763,9 +884,68 @@ export function createScene() {
 
     // Draw sightline connections
     updateVisualConnections(connections, lonelyCottages);
+
+    // Show settle button when there are cottages placed and not currently settling
+    const settleBtn = document.getElementById('settle-btn');
+    const hasCottages = state.pieces.some(p => p.type === 'COTTAGE');
+    if (hasCottages && !isSettling) {
+      settleBtn.classList.add('visible');
+      // Pulse when budget is exhausted
+      if (totalBudget(state) === 0) {
+        settleBtn.classList.add('pulse');
+      } else {
+        settleBtn.classList.remove('pulse');
+      }
+    } else {
+      settleBtn.classList.remove('visible');
+      settleBtn.classList.remove('pulse');
+    }
   }
 
   updateUI();
+
+  // ─── Settle button ───
+  const settleBtnEl = document.getElementById('settle-btn');
+  const storyCardEl = document.getElementById('story-card');
+  const settleProgressEl = document.getElementById('settle-progress');
+  const settleBarEl = document.getElementById('settle-bar');
+
+  settleBtnEl.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (isSettling) return;
+    if (!state.pieces.some(p => p.type === 'COTTAGE')) return;
+
+    isSettling = true;
+    settleBtnEl.disabled = true;
+    settleBtnEl.classList.remove('visible');
+    settleProgressEl.classList.remove('hidden');
+
+    // Create settle controller
+    settleController = createSettleController(
+      state.pieces, residents, state.grid,
+      (directorResult) => {
+        // Settle complete, show story card
+        isSettling = false;
+        settleProgressEl.classList.add('hidden');
+        settleBtnEl.disabled = false;
+
+        const { total } = computeScore(state.grid, state.pieces);
+
+        document.getElementById('story-beat-name').textContent = directorResult.beat.name;
+        document.getElementById('story-caption').textContent = directorResult.caption;
+        document.getElementById('story-score').textContent = total;
+        storyCardEl.classList.remove('hidden');
+
+        updateUI();
+      }
+    );
+
+    settleController.start(performance.now());
+  });
+
+  document.getElementById('story-close').addEventListener('click', () => {
+    storyCardEl.classList.add('hidden');
+  });
 
   // ─── Mobile buttons ───
   document.getElementById('btn-rotate').addEventListener('click', (e) => {
@@ -880,9 +1060,32 @@ export function createScene() {
       line.material.opacity = 0.3 + Math.sin(elapsed * 2) * 0.15;
     }
 
-    // Resident idle bob (all spawned residents breathe gently)
-    for (const [id, mesh] of residentMeshMap) {
-      mesh.position.y = Math.sin(elapsed * 2 + mesh.position.x * 3) * 0.03;
+    // Settle animation tick
+    if (settleController && settleController.isRunning) {
+      const result = settleController.update(performance.now());
+      settleBarEl.style.width = (result.progress * 100) + '%';
+
+      // Move residents to their timeline positions
+      for (const { residentId, position } of result.positions) {
+        const mesh = residentMeshMap.get(residentId);
+        if (mesh) {
+          mesh.position.x = position.x;
+          mesh.position.z = position.z;
+          mesh.position.y = Math.sin(elapsed * 8 + mesh.position.x) * 0.05;
+        }
+      }
+
+      // Lighting shift: dawn (warm) to dusk (golden orange)
+      const sunProgress = result.progress;
+      const sunAngle = 10 + sunProgress * 5;
+      key.position.y = sunAngle;
+      key.intensity = 0.7 + sunProgress * 0.5;
+      ambient.intensity = 0.3 + sunProgress * 0.2;
+    } else {
+      // Resident idle bob (all spawned residents breathe gently)
+      for (const [id, mesh] of residentMeshMap) {
+        mesh.position.y = Math.sin(elapsed * 2 + mesh.position.x * 3) * 0.03;
+      }
     }
 
     composer.render();
