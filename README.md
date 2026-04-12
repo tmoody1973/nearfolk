@@ -76,7 +76,9 @@ npm run build   # dist/
 
 ## The backstory
 
-Nearfolk grew out of an ACRE capstone project where I designed a pocket neighborhood for a site in Milwaukee. ACRE is a commercial real estate development program run by LISC Milwaukee. That project got me thinking about Ross Chapin's work on how small communities actually function, and I kept wondering what that theory would feel like as a puzzle. This game is the answer.
+Nearfolk grew out of the Avenues West Cottages capstone, a 15-home pocket neighborhood proposal I developed with Chandra Ellis for the ACRE program (Associates in Commercial Real Estate, run by LISC Milwaukee). We spent six months designing a cottage cluster for a site on W. State Street: small homes around a shared commons, porches facing inward, paths connecting everything. The whole design was built on Ross Chapin's idea that good neighborhoods happen because of sightlines and layered privacy, not density.
+
+After finishing the capstone, I kept thinking about that idea. How the direction a porch faces changes whether two neighbors ever meet. I wanted other people to feel that, so I turned it into a puzzle.
 
 Designed and directed by Tarik Moody. 90%+ of code written by AI (Claude Code) for the Cursor Vibe Jam.
 
