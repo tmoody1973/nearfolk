@@ -16,9 +16,10 @@ import { VignetteShader } from 'three/examples/jsm/shaders/VignetteShader.js';
 import {
   GRID_SIZE, PIECE_SIZES, ROTATIONS,
   createInitialState, canPlace, placePiece, removePiece,
-  undo, redo, totalBudget,
+  rotatePieceInPlace, undo, redo, totalBudget,
 } from './state.js';
 import { PIECE_FACTORIES } from './pieces/index.js';
+import { computeScore } from './scoring.js';
 
 export function createScene() {
   // ─── State ───
@@ -30,15 +31,35 @@ export function createScene() {
   const scene = new Scene();
   scene.background = new Color(0xf5efe6);
 
-  // ─── Camera ───
+  // ─── Camera (zoom + orbit) ───
   const aspect = window.innerWidth / window.innerHeight;
-  const frustumSize = 15;
+  let zoom = 15;          // frustum size (smaller = zoomed in)
+  const ZOOM_MIN = 6;
+  const ZOOM_MAX = 22;
+  let orbitAngle = Math.PI / 4;  // 45 degrees (default iso)
+  const CAM_HEIGHT = 12;
+  const CAM_DIST = 12;
+
   const camera = new OrthographicCamera(
-    (frustumSize * aspect) / -2, (frustumSize * aspect) / 2,
-    frustumSize / 2, frustumSize / -2, 0.1, 100
+    (zoom * aspect) / -2, (zoom * aspect) / 2,
+    zoom / 2, zoom / -2, 0.1, 100
   );
-  camera.position.set(12, 12, 12);
-  camera.lookAt(0, 0, 0);
+
+  function updateCamera() {
+    const a = window.innerWidth / window.innerHeight;
+    camera.left = (zoom * a) / -2;
+    camera.right = (zoom * a) / 2;
+    camera.top = zoom / 2;
+    camera.bottom = zoom / -2;
+    camera.position.set(
+      Math.cos(orbitAngle) * CAM_DIST,
+      CAM_HEIGHT,
+      Math.sin(orbitAngle) * CAM_DIST
+    );
+    camera.lookAt(0, 0, 0);
+    camera.updateProjectionMatrix();
+  }
+  updateCamera();
 
   // ─── Renderer ───
   const renderer = new WebGLRenderer({ antialias: true });
@@ -164,6 +185,31 @@ export function createScene() {
     return { x: cx, z: cz };
   }
 
+  // ─── Scroll to zoom ───
+  window.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    zoom += e.deltaY * 0.01;
+    zoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, zoom));
+    updateCamera();
+  }, { passive: false });
+
+  // ─── Middle-click to rotate placed piece ───
+  window.addEventListener('mousedown', (e) => {
+    if (e.button !== 1) return; // middle click
+    e.preventDefault();
+    if (hoverCell.x < 0) return;
+    const pieceId = state.grid[hoverCell.x][hoverCell.z];
+    if (pieceId === null) return;
+
+    state = rotatePieceInPlace(state, pieceId);
+    const piece = state.pieces.find(p => p.id === pieceId);
+    const mesh = meshMap.get(pieceId);
+    if (mesh && piece) {
+      mesh.rotation.y = (piece.rotation * Math.PI) / 180;
+    }
+    updateUI();
+  });
+
   // ─── Mouse events ───
   window.addEventListener('mousemove', (e) => {
     const cell = cellFromMouse(e);
@@ -226,11 +272,37 @@ export function createScene() {
 
   // ─── Keyboard ───
   window.addEventListener('keydown', (e) => {
-    // R: rotate
+    // R: rotate selected piece type (for next placement)
     if (e.key === 'r' || e.key === 'R') {
       const idx = ROTATIONS.indexOf(state.rotation);
       state = { ...state, rotation: ROTATIONS[(idx + 1) % ROTATIONS.length] };
       updatePreview();
+    }
+
+    // Q/E: orbit camera
+    if (e.key === 'q' || e.key === 'Q') {
+      orbitAngle -= Math.PI / 4;
+      updateCamera();
+    }
+    if (e.key === 'e' || e.key === 'E') {
+      orbitAngle += Math.PI / 4;
+      updateCamera();
+    }
+
+    // T: rotate placed piece under cursor
+    if (e.key === 't' || e.key === 'T') {
+      if (hoverCell.x >= 0) {
+        const pieceId = state.grid[hoverCell.x][hoverCell.z];
+        if (pieceId !== null) {
+          state = rotatePieceInPlace(state, pieceId);
+          const piece = state.pieces.find(p => p.id === pieceId);
+          const mesh = meshMap.get(pieceId);
+          if (mesh && piece) {
+            mesh.rotation.y = (piece.rotation * Math.PI) / 180;
+          }
+          updateUI();
+        }
+      }
     }
 
     // Ctrl+Z: undo
@@ -366,7 +438,7 @@ export function createScene() {
       <div id="score-value">0</div>
     </div>
     <div id="piece-palette"></div>
-    <div id="controls-hint">Click to place · R to rotate · Right-click to remove · Ctrl+Z to undo · 1-8 to select</div>
+    <div id="controls-hint">Click place · R rotate · T rotate placed · Right-click remove · Q/E orbit · Scroll zoom · Ctrl+Z undo</div>
   `;
   document.body.appendChild(uiContainer);
 
@@ -408,8 +480,10 @@ export function createScene() {
       paletteEl.appendChild(item);
     });
 
-    // Score (placeholder 0 until scoring.js is built)
-    scoreEl.textContent = '0';
+    // Live score
+    const { total, breakdown } = computeScore(state.grid, state.pieces);
+    scoreEl.textContent = total;
+    scoreEl.title = `Eyes: ${breakdown.eyeContactEdges || 0}×3  Nodes: ${breakdown.sharedNodeEncounters || 0}×2  Paths: ${breakdown.pathCrossings || 0}×1  Lonely: -${breakdown.lonelyResidents || 0}×5  Walls: -${breakdown.blankWallViews || 0}×1`;
   }
 
   updateUI();
@@ -449,8 +523,13 @@ export function createScene() {
     requestAnimationFrame(animate);
     const elapsed = (performance.now() - startTime) / 1000;
 
-    // Camera breathing
-    camera.position.y = 12 + Math.sin(elapsed * 0.3) * 0.1;
+    // Camera breathing (gentle Y oscillation on top of orbit position)
+    const breathY = Math.sin(elapsed * 0.3) * 0.1;
+    camera.position.set(
+      Math.cos(orbitAngle) * CAM_DIST,
+      CAM_HEIGHT + breathY,
+      Math.sin(orbitAngle) * CAM_DIST
+    );
     camera.lookAt(0, 0, 0);
 
     // Resident walk
@@ -471,15 +550,10 @@ export function createScene() {
 
   // ─── Resize ───
   window.addEventListener('resize', () => {
-    const a = window.innerWidth / window.innerHeight;
-    camera.left = (frustumSize * a) / -2;
-    camera.right = (frustumSize * a) / 2;
-    camera.top = frustumSize / 2;
-    camera.bottom = frustumSize / -2;
-    camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
     composer.setSize(window.innerWidth, window.innerHeight);
     hTilt.uniforms.h.value = 1.5 / window.innerHeight;
     vTilt.uniforms.v.value = 1.5 / window.innerWidth;
+    updateCamera();
   });
 }

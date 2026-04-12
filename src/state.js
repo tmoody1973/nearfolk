@@ -146,6 +146,24 @@ export function redo(state) {
   };
 }
 
+// Rotate a placed piece in-place (cycles through 0/90/180/270)
+export function rotatePieceInPlace(state, pieceId) {
+  const piece = state.pieces.find(p => p.id === pieceId);
+  if (!piece) return state;
+
+  const idx = ROTATIONS.indexOf(piece.rotation);
+  const newRotation = ROTATIONS[(idx + 1) % ROTATIONS.length];
+
+  return {
+    ...state,
+    pieces: state.pieces.map(p =>
+      p.id === pieceId ? { ...p, rotation: newRotation } : p
+    ),
+    undoStack: [...state.undoStack, state],
+    redoStack: [],
+  };
+}
+
 // Get total remaining budget
 export function totalBudget(state) {
   return Object.values(state.budget).reduce((sum, n) => sum + n, 0);
