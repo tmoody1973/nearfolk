@@ -98,6 +98,76 @@ export function createScene() {
   ground.receiveShadow = true;
   scene.add(ground);
 
+  const halfGrid = GRID_SIZE / 2;
+
+  // ─── Grid lines (subtle) ───
+  const gridLineMat = new LineBasicMaterial({ color: 0x8a9a7a, transparent: true, opacity: 0.2 });
+  for (let i = 0; i <= GRID_SIZE; i++) {
+    const offset = i - halfGrid;
+    // Horizontal
+    const hGeo = new BufferGeometry();
+    hGeo.setAttribute('position', new Float32BufferAttribute([
+      -halfGrid, 0.01, offset, halfGrid, 0.01, offset
+    ], 3));
+    scene.add(new Line(hGeo, gridLineMat));
+    // Vertical
+    const vGeo = new BufferGeometry();
+    vGeo.setAttribute('position', new Float32BufferAttribute([
+      offset, 0.01, -halfGrid, offset, 0.01, halfGrid
+    ], 3));
+    scene.add(new Line(vGeo, gridLineMat));
+  }
+
+  // ─── Commons (pre-placed shared space, 3x3 at center) ───
+  const COMMONS_X = 3;
+  const COMMONS_Z = 3;
+  const COMMONS_W = 3;
+  const COMMONS_H = 3;
+
+  // Mark commons cells as occupied in state
+  for (let dx = 0; dx < COMMONS_W; dx++) {
+    for (let dz = 0; dz < COMMONS_H; dz++) {
+      state.grid[COMMONS_X + dx][COMMONS_Z + dz] = 'COMMONS';
+    }
+  }
+
+  // Commons visual: a slightly raised lighter green area with a subtle border
+  const commonsGround = new Mesh(
+    new BoxGeometry(COMMONS_W, 0.06, COMMONS_H),
+    new MeshLambertMaterial({ color: 0xb8c8a8, flatShading: true })
+  );
+  commonsGround.position.set(
+    COMMONS_X - halfGrid + COMMONS_W / 2,
+    0.03,
+    COMMONS_Z - halfGrid + COMMONS_H / 2
+  );
+  commonsGround.receiveShadow = true;
+  scene.add(commonsGround);
+
+  // Small decorative elements on commons
+  // Center tree
+  const commonsTree = new Group();
+  const cTrunk = new Mesh(
+    new BoxGeometry(0.12, 0.8, 0.12),
+    new MeshLambertMaterial({ color: 0x6b4e3a, flatShading: true })
+  );
+  cTrunk.position.y = 0.4;
+  cTrunk.castShadow = true;
+  commonsTree.add(cTrunk);
+  const cFoliage = new Mesh(
+    new SphereGeometry(0.5, 6, 6),
+    new MeshLambertMaterial({ color: 0x7a9464, flatShading: true })
+  );
+  cFoliage.position.y = 1.0;
+  cFoliage.castShadow = true;
+  commonsTree.add(cFoliage);
+  commonsTree.position.set(
+    COMMONS_X - halfGrid + COMMONS_W / 2,
+    0.06,
+    COMMONS_Z - halfGrid + COMMONS_H / 2
+  );
+  scene.add(commonsTree);
+
   // ─── Sky ───
   const sky = new Mesh(
     new SphereGeometry(40, 16, 16),
@@ -128,7 +198,6 @@ export function createScene() {
   const raycaster = new Raycaster();
   const mouse = new Vector2();
   const hoverCell = { x: -1, z: -1 };
-  const halfGrid = GRID_SIZE / 2;
 
   const highlight = new Mesh(
     new BoxGeometry(1, 0.02, 1),
@@ -432,6 +501,35 @@ export function createScene() {
         font-size: 0.7rem;
         opacity: 0.4;
       }
+      #mobile-controls {
+        position: absolute;
+        bottom: 48px;
+        right: 16px;
+        display: flex;
+        gap: 8px;
+        pointer-events: auto;
+      }
+      .mobile-btn {
+        width: 44px;
+        height: 44px;
+        border-radius: 8px;
+        border: none;
+        background: rgba(240, 228, 208, 0.85);
+        color: #6b4e3a;
+        font-size: 1.1rem;
+        font-weight: 700;
+        cursor: pointer;
+        font-family: 'Nunito', sans-serif;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        user-select: none;
+        -webkit-tap-highlight-color: transparent;
+      }
+      .mobile-btn:active { background: rgba(139, 107, 74, 0.3); }
+      @media (min-width: 769px) {
+        #mobile-controls { display: none; }
+      }
     </style>
     <div id="game-name">Nearfolk</div>
     <div id="score-display">
@@ -439,6 +537,12 @@ export function createScene() {
       <div id="score-value">0</div>
     </div>
     <div id="piece-palette"></div>
+    <div id="mobile-controls">
+      <button class="mobile-btn" id="btn-rotate" title="Rotate">R</button>
+      <button class="mobile-btn" id="btn-orbit-l" title="Orbit left">Q</button>
+      <button class="mobile-btn" id="btn-orbit-r" title="Orbit right">E</button>
+      <button class="mobile-btn" id="btn-undo" title="Undo">↩</button>
+    </div>
     <div id="controls-hint">Click place · R rotate · T rotate placed · Right-click remove · Q/E orbit · Scroll zoom · Ctrl+Z undo</div>
   `;
   document.body.appendChild(uiContainer);
@@ -546,6 +650,93 @@ export function createScene() {
   }
 
   updateUI();
+
+  // ─── Mobile buttons ───
+  document.getElementById('btn-rotate').addEventListener('click', (e) => {
+    e.stopPropagation();
+    const idx = ROTATIONS.indexOf(state.rotation);
+    state = { ...state, rotation: ROTATIONS[(idx + 1) % ROTATIONS.length] };
+    updatePreview();
+  });
+  document.getElementById('btn-orbit-l').addEventListener('click', (e) => {
+    e.stopPropagation();
+    orbitAngle -= Math.PI / 4;
+    updateCamera();
+  });
+  document.getElementById('btn-orbit-r').addEventListener('click', (e) => {
+    e.stopPropagation();
+    orbitAngle += Math.PI / 4;
+    updateCamera();
+  });
+  document.getElementById('btn-undo').addEventListener('click', (e) => {
+    e.stopPropagation();
+    syncStateToScene(undo(state));
+  });
+
+  // ─── Keyboard nav (arrow keys + space) ───
+  let keyboardCursor = { x: Math.floor(GRID_SIZE / 2), z: Math.floor(GRID_SIZE / 2) };
+  let keyboardActive = false;
+
+  function activateKeyboard() {
+    keyboardActive = true;
+    hoverCell.x = keyboardCursor.x;
+    hoverCell.z = keyboardCursor.z;
+    highlight.position.set(
+      keyboardCursor.x - halfGrid + 0.5, 0.02,
+      keyboardCursor.z - halfGrid + 0.5
+    );
+    highlight.visible = true;
+    updatePreview();
+  }
+
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+      e.preventDefault();
+      if (!keyboardActive) { activateKeyboard(); return; }
+
+      if (e.key === 'ArrowUp') keyboardCursor.z = Math.max(0, keyboardCursor.z - 1);
+      if (e.key === 'ArrowDown') keyboardCursor.z = Math.min(GRID_SIZE - 1, keyboardCursor.z + 1);
+      if (e.key === 'ArrowLeft') keyboardCursor.x = Math.max(0, keyboardCursor.x - 1);
+      if (e.key === 'ArrowRight') keyboardCursor.x = Math.min(GRID_SIZE - 1, keyboardCursor.x + 1);
+
+      hoverCell.x = keyboardCursor.x;
+      hoverCell.z = keyboardCursor.z;
+      highlight.position.set(
+        keyboardCursor.x - halfGrid + 0.5, 0.02,
+        keyboardCursor.z - halfGrid + 0.5
+      );
+      highlight.visible = true;
+      updatePreview();
+    }
+
+    // Space: place piece (keyboard nav)
+    if (e.key === ' ' && keyboardActive) {
+      e.preventDefault();
+      if (hoverCell.x < 0) return;
+      if (!canPlace(state, state.selectedType, hoverCell.x, hoverCell.z)) return;
+
+      const type = state.selectedType;
+      const rotation = state.rotation;
+      const x = hoverCell.x;
+      const z = hoverCell.z;
+
+      state = placePiece(state, type, x, z, rotation);
+      const placed = state.pieces[state.pieces.length - 1];
+
+      const mesh = PIECE_FACTORIES[type]();
+      mesh.rotation.y = (rotation * Math.PI) / 180;
+      const size = PIECE_SIZES[type];
+      mesh.position.set(x - halfGrid + size.w / 2, 0, z - halfGrid + size.h / 2);
+      scene.add(mesh);
+      meshMap.set(placed.id, mesh);
+
+      updatePreview();
+      updateUI();
+    }
+  });
+
+  // Deactivate keyboard nav when mouse moves
+  window.addEventListener('mousemove', () => { keyboardActive = false; }, { once: false });
 
   // ─── Resident (demo walker) ───
   const residentGroup = new Group();
