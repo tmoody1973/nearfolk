@@ -1,0 +1,901 @@
+# Pocket Neighborhood + RimWorld DNA
+
+This is a genuinely good instinct. RimWorld is the gold standard for *emergent story from simple rules*, and the thing it teaches that almost nobody copies correctly is this: **the magic isn't the simulation depth, it's the director.** Randomness doesn't make stories. A system that *watches your state and picks dramatically interesting moments* makes stories. That's Tynan Sylvester's actual insight, and it's portable to almost any genre — including a cozy 90-second cottage builder.
+
+Here's how to steal the right things without breaking the jam constraints.
+
+## The core translation
+
+RimWorld's three pillars are **pawns with interiority, a storyteller AI that directs events, and needs/mood feedback loops that make the environment matter.** All three translate — but the tone doesn't. You're not porting survival-sim crisis. You're porting the *storytelling architecture* and inverting the emotional register from "a tragedy you tell your friends at the bar" to "a small moment of grace you screenshot."
+
+The shift is: **RimWorld generates bad things happening to people you care about. Pocket Neighborhood generates small kindnesses emerging from places you designed.** Same engine, opposite vector.
+
+## The Day Director (your Cassandra equivalent)
+
+Right now your settle animation is deterministic: place pieces → residents walk routines → score resolves. Kill that. Instead, the settle is **narratively directed**.
+
+When the player hits Settle, a Day Director function runs once. It looks at the current neighborhood state — who's placed, who's lonely, who has the strongest sightlines, which residents have traits that haven't fired yet, what happened in yesterday's settle — and it *picks a story beat for the day*. One beat. Sometimes two. Then it injects behavior overrides into the resident routines to make that beat happen during the 25-second settle animation.
+
+Example beats the Director might pick:
+
+- **"The Check-In."** Neighborhood has one isolated cottage with low encounter count. Director picks the nearest sociable resident, overrides her afternoon routine to walk to the isolated porch, creates a one-time encounter worth a "care bonus." Story card reads: *"June noticed Maya hadn't been out all week. She brought coffee."*
+- **"The Accidental Meeting."** Two residents with compatible traits (Gardener + Gardener) have never encountered each other because their cottages face opposite directions. Director spawns a stray-cat wanderer that crosses both their paths, creating a forced meet. *"A stray cat led Dev and Tomás to the same corner of the commons. They stayed and talked."*
+- **"The Potluck."** Neighborhood has 5+ cottages and good path density. Director converts today's commons into a potluck — every resident converges at dusk, bonus scales with how many paths reach the commons efficiently. *"Somebody brought a folding table. By sunset, everyone was there."*
+- **"The Quiet Day."** Neighborhood is well-designed and peaceful. Director picks nothing dramatic, just cues a softer music track and adds one extra "golden moment" particle effect at the highest-scoring sightline. *"Nothing happened today. It was perfect."*
+
+The Director is maybe 300 lines of code: a scored list of ~20 possible beats, each with a trigger condition and a behavior-override function. It picks the beat with the highest *dramatic fit score* given current state. That fit score is exactly the RimWorld trick — it's not randomness, it's curated appropriateness.
+
+This single system transforms the game from "optimize a static score" to "design a space where good things want to happen." That's a much better game and it's barely more work than what you were already building.
+
+## Traits (the minimal RimWorld version)
+
+Every resident gets exactly **one trait**, drawn from a pool of about 15. Traits modify two things: how that resident walks their routine, and how the Day Director evaluates beats involving them.
+
+Keep the pool tight and warm:
+
+- **Gardener** — visits shared gardens twice, big encounter value there
+- **Night Owl** — skips morning coffee, double-weight at fire pit
+- **Early Bird** — huge morning routine, loves mailbox cluster encounters
+- **Host** — porch becomes a stronger encounter node for anyone who passes
+- **Introvert** — penalty if facing more than 2 cottages, bonus if facing exactly 1
+- **New in Town** — needs at least 2 encounters or they become "lonely" faster
+- **Green Thumb** — treats trees as encounter nodes, not just sightline blockers
+- **Homebody** — rarely leaves porch; bonus for porches with good views
+- **Wanderer** — walks the whole path network; bonus for long connected paths
+- **Storyteller** — every encounter they're part of gets +1
+
+Traits are visible on hover. They turn the puzzle from "maximize sightlines" into "maximize sightlines *for this specific cast*." Same lot, different residents, completely different optimal layout. That's where replayability lives.
+
+RimWorld-core detail you should absolutely steal: **traits should occasionally conflict in interesting ways**. An Introvert next to a Host is a problem. A Night Owl and an Early Bird can share a cottage facing but never actually encounter each other because their routines don't overlap in time — you have to place a bench on the path between them so they bump into each other in transition. These little puzzles are where players fall in love.
+
+## Events (the cozy catastrophe layer)
+
+In RimWorld, events escalate. In Pocket Neighborhood, events *recontextualize*. Every daily seed rolls one environmental condition that changes piece values for that day:
+
+- **Rainy morning** — porches become 2× valuable, fire pit unavailable, tree sightline-blocks disabled (everyone's inside looking out)
+- **Heatwave** — trees are encounter nodes (shade), benches are 2×, fire pit penalty
+- **First frost** — fire pit is 3×, shared garden penalty
+- **Block party** — commons is 2×, every cottage must connect by path or huge penalty
+- **Moving day** — one of your residents leaves; a new one arrives mid-settle with a random trait (Director picks the beat based on the new arrival)
+- **Power's out** — no ambient lighting, the only light sources are fire pit and porches-with-lamps (unlock at score thresholds)
+- **Festival week** — two bonus pieces added to your budget for the day (string lights, food cart)
+
+These feed into the daily seed system you already planned. The seed roll determines the condition; the player adapts; the Director narrates the outcome. Three layers of variation without adding any new UI.
+
+## Memory and micro-relationships
+
+This is the smallest, highest-leverage RimWorld mechanic you can steal. **Residents remember yesterday.** Not much. Just two fields per resident:
+
+- `lastSettleEncounters`: number
+- `lastSettleDirectorBeat`: which beat (if any) they were in
+
+On today's settle, the Director reads yesterday's memory and uses it to pick beats. If Maya was the subject of yesterday's Check-In beat, today the Director won't pick her again — but it *might* pick a beat where Maya is the one checking in on someone else. ("Maya remembered how it felt.") That's a full RimWorld-style arc in 15 lines of code and it makes the daily seed feel like a continuing story instead of disconnected puzzles.
+
+Optional second layer if you have time: **friendships form** when two residents are in three encounters together across different days. Friends generate a new encounter type — "unprompted visits" — that the Director can use as a beat. You'll see it in the settle as one resident walking off-route to another's porch, a little heart, and a bonus. Friendships persist across daily seeds as long as both residents remain in the neighborhood. The neighborhood develops a *social graph* that outlives any single day.
+
+## Story cards (the output format)
+
+In RimWorld, the game gives you stories you tell your friends. In Pocket Neighborhood, the game gives you a shareable image. Merge them.
+
+After every settle, the score card isn't just a number. It's:
+
+- A screenshot of your neighborhood at the final dusk frame
+- Your score and rank
+- **Today's story** — the Director's chosen beat, rendered as a one-sentence caption
+- The day's condition icon (rainy, heatwave, etc.)
+- A single highlighted moment — the pixel coordinates of where the beat happened, with a small glowing marker
+
+This is the share asset. *"June paid Maya a visit. Score: 87. Day 12."* That tweets itself. It's also the thing that makes the game feel like you're telling stories instead of climbing a leaderboard, which is exactly the RimWorld emotional loop.
+
+## Storyteller personas (difficulty as character)
+
+Steal this one directly. RimWorld has Cassandra, Phoebe, Randy. You have:
+
+- **Ross** (after Ross Chapin) — the gentle one. Picks warm beats. Rarely does cozy catastrophes. Rewards thoughtful layout. The default.
+- **Jane** (after Jane Jacobs) — the chaotic urbanist. Loves density, surprise encounters, block parties. Picks wilder beats. Will occasionally throw a condition that wrecks your optimal layout because "cities need disruption."
+- **Chris** (after Christopher Alexander) — the patterns purist. Only picks beats that correspond to specific spatial configurations. Hardest to satisfy, highest ceiling if you understand the language.
+
+Three named storytellers, three different feels, same game. Player picks before the daily seed runs. Each one is maybe 80 lines of beat-weighting code. This is an *enormous* amount of replayability for a trivial amount of work, and naming them after actual architecture/urbanism theorists is a Tarik-only move that reinforces the design thesis.
+
+## Scope reality check
+
+Here's the honest version. What I just described is three tiers of scope. You don't ship all of it.
+
+**Tier 1 — ship this for sure (adds ~2 days to your Week 2 build):**
+- Day Director with 8–10 beats
+- Traits (15 in the pool, each resident gets one)
+- One environmental condition per daily seed
+- Story card output with beat caption
+
+This alone transforms the game. Everything else is gravy.
+
+**Tier 2 — ship if Week 2 goes smoothly (~2 more days in Week 3):**
+- Memory across days
+- Three storyteller personas
+- 5 more beats, 5 more traits
+- Expanded story card with highlighted moment
+
+**Tier 3 — only if you're somehow ahead of schedule (don't count on this):**
+- Friendship formation and persistent social graph
+- Unlockable pieces tied to story beats
+- Beat chains (multi-day arcs)
+
+If you try to ship all three tiers you will not ship anything. Lock in Tier 1 on Day 1 and treat Tier 2 as a Week 3 stretch goal you decide on April 24th based on how Tier 1 feels.
+
+## How this changes the build plan
+
+Your Week 1 doesn't change at all — still prove the vibe with one cottage and golden hour.
+
+Your Week 2 changes in one specific way: **build the Day Director second, right after you have basic pathfinding working and before you build the static scoring graph.** The Director should be the first thing that consumes neighborhood state, and static scoring should be built on top of it as a fallback for when no beat fires. Doing it in that order keeps the architecture clean. If you build static scoring first and try to bolt the Director on later, you'll end up with two competing systems fighting for control of the settle animation.
+
+Your Week 3 art pass gets harder in a good way: you now need *beat-specific visual cues*. The Check-In beat needs a different particle effect than the Potluck. Budget an extra day for this and cut one of your polish passes if you have to. The visual distinctiveness of beats is what sells the whole storyteller conceit.
+
+## Why this actually wins
+
+Pocket Neighborhood without the Director is a nice puzzle game with a cozy skin. Pocket Neighborhood with the Director is *a game about how good design creates the conditions for small kindnesses*. That's a thesis. And it's a thesis that maps exactly onto the real architecture work you're doing at Avenues West, which is the thing Chapin's pocket neighborhood theory has been saying since 1996 and which almost nobody has built a game around.
+
+The RimWorld lineage also gives you something to point at in the submission copy. Something like: *"Think RimWorld's storyteller, inverted. Instead of dramatic disasters in a space colony, it generates quiet moments of neighborliness in a cottage cluster. Same engine, opposite emotional vector."* Judges who know RimWorld — and on a levelsio-adjacent panel, they all do — will immediately understand what you're trying to do and why it's interesting. That's a massive cognitive shortcut for a 30-second judging window.
+
+---
+
+**One question that actually matters before you commit to this path:**
+
+Are you willing to let the Day Director *override* pure optimization? Meaning: a layout that's mathematically the highest-scoring static layout might not produce the best stories, and therefore won't actually win the highest final scores once the Director's bonuses are factored in. This is philosophically correct — it's what makes it a game about *design*, not *math* — but some players will hate it because it breaks the clean optimization loop.
+
+My strong vote is yes, let the Director rule. The people who want pure optimization games already have 10,000 of them. The people who want a game where good design gets rewarded with stories don't have very many, and that's your actual audience and your actual differentiation. But it's a real design decision and you should make it consciously on Day 1, not drift into it.
+
+Want me to go deeper on the Director's beat-picking algorithm, write out the full trait list with mechanical effects, or sketch the data model for memory/relationships?
+
+# Pocket Neighborhood — the full dive
+
+## The design thesis (this is the part that makes it not just cute)
+
+Most "cozy builder" games are vibes with a number attached. They don't have a design argument. This one does, and the argument is load-bearing: **pocket neighborhoods work because of sightlines, not density.**
+
+Ross Chapin's actual architectural theory — which you can cite in your submission and which underlies Avenues West — says that good small-scale community design is about *layered privacy*. There's public (the street), semi-public (the commons), semi-private (the porch, the front garden), and private (the cottage interior). Community emerges when people pass through the semi-private layer on their way in and out, encountering each other in low-stakes ways — a wave from a porch, bumping into a neighbor at the shared garden, kids meeting at the fire pit.
+
+That's the game's entire mechanical spine: **you're not placing buildings, you're placing eye contact.** Every porch has a facing direction. Every shared node (garden, fire pit, mailbox cluster, bench) is an encounter generator. Every tree is a sightline blocker you can use tactically. The neighborliness score isn't arbitrary — it's the count of visible social connections that emerge from your placement. When a judge plays it, they feel the design thesis in their hands before they have words for it. That's what separates it from 500 other cozy games in the jam.
+
+And here's the Tarik-only move: you're *literally co-developing 15 real cottages right now*. You can put a line in the submission that says "this game is the design research for Avenues West Cottages, breaking ground 2027" and link to the real project. No one else in that jam can say anything remotely like that. That's the hook a press round-up needs.
+
+## The core mechanic, specified
+
+**The lot.** Not a blank grid. Every daily seed gives you a 10×10 lot with a pre-placed **commons** somewhere in the middle (usually 3×3 or 4×4). The commons is the fixed heart of the neighborhood — you build *around* it. This instantly gives the puzzle structure and keeps players from making boring corner-stuffed layouts.
+
+**The piece palette (8, no more).**
+
+1. **Cottage** (2×2, rotatable). Has a front face — the porch side. This is the most important stat on the piece.
+2. **Porch extension** (1×1, must attach to cottage front). Extends the "eye contact cone" outward by one tile. Optional but valuable.
+3. **Path** (1×1). Required to connect cottages to the commons and to each other. No path = resident can't leave = automatic loneliness penalty.
+4. **Shared garden** (2×2). Afternoon encounter node. Counts for every cottage whose porch can see it.
+5. **Fire pit** (1×1). Evening gathering node. High-value encounter multiplier because *everyone* goes there at dusk.
+6. **Bench** (1×1). Low-value but flexible encounter node. Place along paths for "walking by" encounters.
+7. **Mailbox cluster** (1×1). Morning encounter node. Everyone checks mail, so it's a reliable low-value encounter generator.
+8. **Tree** (1×1). **Blocks sightlines.** This is the tactical piece. Looks decorative but can wreck an eye-contact graph — or save one by blocking a porch from seeing a cottage's blank back wall (which is a small negative).
+
+Eight pieces. No more. Every piece has a distinct mechanical role. A designer could spend a month adding more pieces and the game would get *worse*.
+
+**Scoring, in one formula:**
+
+```
+Neighborliness = Σ(eye-contact edges) × 3
+               + Σ(shared-node encounters) × 2
+               + Σ(path-crossing encounters) × 1
+               − Σ(lonely residents) × 5
+               − Σ(blank-wall views) × 1
+```
+
+An **eye-contact edge** is when porch A's facing cone intersects porch B's facing cone across open commons or path (trees block). These are the big points — direct porch-to-porch lines of sight across the shared space.
+
+A **shared-node encounter** is when two residents' daily routines bring them to the same activity node (garden, fire pit, mailbox) in the same time-of-day window.
+
+A **path-crossing encounter** is when two residents' pathfinding routes overlap — the "bump into a neighbor on the way home" moment.
+
+A **lonely resident** is a cottage whose porch faces nothing (wall, tree, edge of lot) and whose resident has zero encounters during the day. Visible on screen as a sad little figure. Costs you 5 points and hurts morally.
+
+A **blank-wall view** is when a porch faces the back of another cottage. Small penalty, encourages thoughtful orientation.
+
+This math is simple enough to compute live as you place pieces (~200 lines of graph code) but deep enough that optimal play requires actual spatial reasoning. That's the sweet spot.
+
+## Residents and the settle animation (this is where the game wins or loses)
+
+Every cottage spawns one resident. Residents are pill-shaped, two colors, pick a name from a small list. They have a four-beat daily routine:
+
+**Morning:** Coffee on porch → walk to mailbox cluster → return home
+**Midday:** Walk to shared garden → tend plants → wander path
+**Afternoon:** Visit bench or another porch (social call) → return
+**Evening:** Walk to fire pit → stay until dark → return home
+
+When you hit **Settle**, the camera pulls back slightly, the time-of-day begins cycling from dawn to dusk over ~25 seconds, and every resident walks their routine simultaneously. Where paths cross, little heart particles pop. Where a resident sits on a porch that has eye contact with another resident on another porch, a soft glow connects them. Where a resident has no encounters, a tiny cloud forms over their head and the ambient music gets a single dissonant note.
+
+**The settle is the entire marketing asset.** Your trailer is a 10-second loop of golden-hour-to-dusk on a well-designed neighborhood with hearts popping and a gentle piano coming in. That clip is what levelsio retweets. Design it as a GIF-first thing from day one — if the clip isn't beautiful, nothing else matters.
+
+## The daily meta loop
+
+Every 24 hours (UTC midnight), a new seed drops worldwide. A seed is a JSON blob:
+
+```
+{
+  "date": "2026-04-24",
+  "lotShape": "rectangular|L|T",
+  "commonsPosition": [4,4],
+  "commonsSize": [3,3],
+  "budget": { "cottage": 5, "garden": 2, "firepit": 1, 
+              "path": 12, "bench": 3, "mailbox": 1, 
+              "porch": 4, "tree": 10 },
+  "theme": "Spring morning"
+}
+```
+
+One scored attempt per day per browser (tracked locally, no login). Unlimited practice attempts. Share your final score card as an image — the score card is a styled screenshot of your finished neighborhood with the score, rank, and date burned into it, perfect for social sharing. Global leaderboard is a Cloudflare Worker + KV, one endpoint for POST score, one for GET top 100. Literally ~50 lines of Worker code. That's your entire "multiplayer."
+
+The daily seed is philosophically important: it's how a solo game competes in a jam that rewards multiplayer. You frame it as "everyone in the world is solving the same puzzle today" and that framing earns you the multiplayer credit without any netcode.
+
+## Tech stack (opinionated, minimal)
+
+- **Three.js** for isometric rendering. Orthographic camera at classic 30° iso angle. No glTF files — every piece is procedural geometry (box + pyramid for a cottage, cylinder + cone for a tree). Keeps the bundle tiny and gives you a consistent art style for free.
+- **Vanilla JS + a small state object.** No React, no framework. This is a game, not an app. Bundle target: under 250KB gzipped.
+- **Pathfinding:** A* on the grid, ~100 lines. Claude Code writes this in one shot.
+- **Scoring:** graph analysis over placed pieces, recomputed on every placement. ~200 lines.
+- **Lighting:** three lights — ambient (warm), directional (golden-hour angle, soft shadows), rim (cool counter-light). This is 90% of the vibe. Get it right week 1 and polish it weekly.
+- **Post-processing:** tilt-shift blur on the edges, subtle vignette, slight bloom on warm lights. This is what sells the "miniature diorama" look.
+- **Sound:** Tone.js for the ambient synth pad and the score-tick glockenspiel. CC0 foley from freesound.org for birds, distant kids, wind chimes, wooden clunks for placement. ~1MB of audio total.
+- **Backend:** one Cloudflare Worker, two endpoints, KV namespace for leaderboard. Free tier covers everything.
+- **Deploy:** Vite build → Cloudflare Pages → `pocket.tarik.dev` or similar subdomain.
+- **Build target:** instant load. First meaningful paint under 1 second on a cold cache. This is a jam rule and also the only way to survive a judge scrolling past.
+
+## Art direction (the whole game lives or dies here)
+
+- **Palette:** warm earth tones — terracotta, cream, sage, soft olive, dusty rose, warm white. No saturated primaries anywhere.
+- **Shading:** flat-shaded, no textures. Every face is a single color. This is both fast and distinctive.
+- **Shadows:** soft, long, golden-hour angle. Shadows do most of the visual storytelling.
+- **Reference points:** Monument Valley, Townscaper, Dorfromantik, A Short Hike. Steal the lighting from Monument Valley, the buildability from Townscaper, the cozy-without-being-twee tone from A Short Hike.
+- **Camera:** gentle continuous breathing drift (very subtle sine wave on position) so the scene feels alive even when static.
+- **Residents:** pill body, dot head, two colors each. That's it. Don't over-animate — a simple bob-walk is more charming than proper skeletal animation.
+
+Pick these references and lock them on day one. Tape them above your monitor.
+
+## Sound design (massively underrated)
+
+Cozy games are 40% sound. Budget real time for this in week 3.
+
+- **Ambient bed:** wind through leaves, distant unintelligible kids, a wind chime every ~20 seconds, one distant dog bark per minute. Loops imperceptibly.
+- **Placement SFX:** soft wooden clunk for cottage/porch, leaf rustle for tree, stone clink for path, metallic clink for mailbox, crackle for fire pit, dirt pat for garden.
+- **Score ticker:** a single glockenspiel note per point gained, pitch rising subtly with score. This creates the dopamine drip.
+- **Settle animation underscore:** ambient pad with a gentle piano melody entering at ~8 seconds in, resolving at ~22 seconds.
+- **End card:** single bell ring. Silence. Score.
+
+All of this is achievable with Tone.js + 15 CC0 foley samples. Under 1MB total.
+
+## Week-by-week plan
+
+**Week 1 (Apr 10–16): prove the vibe.**
+Three.js scene with iso ortho camera. 10×10 grid with subtle ground. Raycaster for hover highlight. One cottage, placeable with R-to-rotate. One resident walking a hardcoded path. Golden-hour lighting. By Friday night, you should be able to screenshot the scene and feel the cozy.
+
+**Week 1 success metric:** a static screenshot of an empty lot with one cottage and one walking resident looks like something you'd want to play.
+
+**Week 2 (Apr 17–23): build the full game.**
+All 8 pieces. Full drag-and-place UX. Pathfinding. Eye-contact detection. Shared-node encounters. Loneliness penalty. Live scoring ticker. First pass on the settle animation — day/night cycle, residents walking routines, basic particle effects for encounters. By Sunday night, you can play one full round start to finish.
+
+**Week 2 success metric:** you build a neighborhood, hit settle, watch 25 seconds of your neighborhood living, and smile.
+
+**Week 3 (Apr 24–30): meta, polish, ship-ready.**
+Daily seed system. Cloudflare Worker leaderboard. Share-as-image score card. 60-second silent onboarding that teaches eye-contact placement without text. Audio pass. Lighting polish. Post-processing. Trailer capture — record a perfect 10-second loop of the settle animation on a hand-built gorgeous neighborhood.
+
+**Week 3 success metric:** a stranger can open the URL, learn it in 30 seconds, and post a score card unprompted.
+
+**Week 4 (May 1 morning): ship.**
+Final bug bash. Submit by 9:00 UTC. Not 13:30. Ship early, watch the chaos from a coffee shop.
+
+## The first 48 hours — concrete tasks for Claude Code
+
+This is what you hand to Claude Code on Monday morning. Each of these is a single-prompt task for it.
+
+1. Scaffold a Vite project with Three.js, set up an orthographic isometric camera looking at a 10×10 grid centered at origin. Ground plane is a single soft sage color with a subtle radial gradient darker toward the edges.
+2. Add three lights: ambient (0xffe8cc at 0.4), directional (0xfff4e0 at 1.0, positioned at [10, 15, 8], casting soft PCF shadows with a 2048 map), and rim (0x88aaff at 0.2 from behind).
+3. Add a raycaster that highlights the grid cell under the mouse with a soft warm overlay.
+4. Create a procedural cottage geometry: a 2×2 box with a pyramid roof. Front face marked by a slightly different color (the porch side). Place on click, rotate with R.
+5. Create a procedural resident: a capsule + small sphere, two colors. Walks from the cottage's porch to a hardcoded point on the grid using lerp on a simple path.
+6. Add a very subtle sine wave to the camera position so the scene breathes.
+7. Add post-processing: tilt-shift blur on the top and bottom 20% of the screen, subtle vignette.
+8. Background color: warm off-white `#f5efe6`.
+
+At the end of 48 hours you have a scene with a cottage, a walking person, golden hour light, tilt-shift blur, and a breathing camera. If that scene doesn't make you feel something, the concept is broken and you pivot. If it does — and it will — you know the rest of the game works.
+
+## The five real risks
+
+**1. "Number go up" feels arbitrary.** The single biggest failure mode. Mitigation: the settle animation must *visually explain* the score. Every point earned corresponds to a visible event — a heart between porches, an encounter at the garden, a sad cloud over a lonely cottage. The number is a summary of things you just *watched happen*. Build this linkage from week 2.
+
+**2. Cozy games read as boring in a 3-second scroll.** Mitigation: the trailer GIF is everything. Design the settle animation as a GIF-first artifact. Golden light, hearts popping, score ticker visible, piano coming in. Three seconds in and someone should want to click.
+
+**3. Depth runs out after three plays.** Mitigation: daily seeds with varied constraints (different lot shapes, different budgets, different commons positions) plus unlockable piece variants at score thresholds (curved path at 50, ornamental tree at 100, gazebo commons variant at 200). Gives the 1% a reason to keep coming back.
+
+**4. Scope creep on pieces.** You *will* want to add a ninth piece. Don't. Ship with eight. Every extra piece doubles balance testing.
+
+**5. Three.js perf with too many residents.** Mitigation: hard cap of 15 cottages per lot. Instanced meshes for trees. Settle animation caps at 60fps.
+
+## The story frame for submission
+
+Lead the submission copy with this, roughly:
+
+> *I'm an architect and public radio director in Milwaukee. I'm currently co-developing Avenues West Cottages — 15 real pocket neighborhood homes breaking ground in 2027. This game is the design research for that project, rendered as a toy. The scoring is based on Ross Chapin's actual theory of layered privacy and sightline-driven community. Every eye-contact line in the game corresponds to a real design decision I'm making at the drafting table.*
+>
+> *A pocket neighborhood in your browser. Ninety seconds. One shared seed a day. No logins, no loading.*
+
+That copy does three jobs at once: it tells a story only you can tell, it earns the "design has a thesis" credit from serious judges, and it gives press a one-paragraph pull-quote. It's also completely true.
+
+## One easter egg worth building
+
+On August 14 (Anti-Gala day), the daily seed is a Harlem Nights–themed lot: warmer lighting, jazz in the ambient bed, pieces get slightly different colors. On whatever day Avenues West actually breaks ground in 2027, the daily seed becomes a recreation of the real Avenues West site plan and the leaderboard is renamed. These cost almost nothing to build (it's just a different JSON seed) and give the game a living connection to the real world it's modeling.
+
+---
+
+**What I'd want to know before you commit:**
+
+Are you willing to put real art-direction hours into the settle animation in week 3? Because that's the single biggest lever on whether this game wins or just ships. Everything else is achievable with AI assistance on autopilot. The settle is where taste matters and where you personally have to show up.
+
+If yes, this is a legitimate Silver/Bronze contender with an outside shot at Gold *because of the Avenues West story angle* — that angle is the kind of thing that makes a judge remember one entry out of 800.
+
+Want me to go deeper on any specific piece of this? The places I could go further:
+
+- The actual scoring graph algorithm (pseudocode-level)
+- The settle animation timeline frame by frame
+- The onboarding flow (silent, 60 seconds, no text)
+- The Cloudflare Worker leaderboard code
+- A mood board / reference sheet you could hand to Claude Code for art direction
+
+# Pocket Neighborhood + RimWorld DNA
+
+This is a genuinely good instinct. RimWorld is the gold standard for *emergent story from simple rules*, and the thing it teaches that almost nobody copies correctly is this: **the magic isn't the simulation depth, it's the director.** Randomness doesn't make stories. A system that *watches your state and picks dramatically interesting moments* makes stories. That's Tynan Sylvester's actual insight, and it's portable to almost any genre — including a cozy 90-second cottage builder.
+
+Here's how to steal the right things without breaking the jam constraints.
+
+## The core translation
+
+RimWorld's three pillars are **pawns with interiority, a storyteller AI that directs events, and needs/mood feedback loops that make the environment matter.** All three translate — but the tone doesn't. You're not porting survival-sim crisis. You're porting the *storytelling architecture* and inverting the emotional register from "a tragedy you tell your friends at the bar" to "a small moment of grace you screenshot."
+
+The shift is: **RimWorld generates bad things happening to people you care about. Pocket Neighborhood generates small kindnesses emerging from places you designed.** Same engine, opposite vector.
+
+## The Day Director (your Cassandra equivalent)
+
+Right now your settle animation is deterministic: place pieces → residents walk routines → score resolves. Kill that. Instead, the settle is **narratively directed**.
+
+When the player hits Settle, a Day Director function runs once. It looks at the current neighborhood state — who's placed, who's lonely, who has the strongest sightlines, which residents have traits that haven't fired yet, what happened in yesterday's settle — and it *picks a story beat for the day*. One beat. Sometimes two. Then it injects behavior overrides into the resident routines to make that beat happen during the 25-second settle animation.
+
+Example beats the Director might pick:
+
+- **"The Check-In."** Neighborhood has one isolated cottage with low encounter count. Director picks the nearest sociable resident, overrides her afternoon routine to walk to the isolated porch, creates a one-time encounter worth a "care bonus." Story card reads: *"June noticed Maya hadn't been out all week. She brought coffee."*
+- **"The Accidental Meeting."** Two residents with compatible traits (Gardener + Gardener) have never encountered each other because their cottages face opposite directions. Director spawns a stray-cat wanderer that crosses both their paths, creating a forced meet. *"A stray cat led Dev and Tomás to the same corner of the commons. They stayed and talked."*
+- **"The Potluck."** Neighborhood has 5+ cottages and good path density. Director converts today's commons into a potluck — every resident converges at dusk, bonus scales with how many paths reach the commons efficiently. *"Somebody brought a folding table. By sunset, everyone was there."*
+- **"The Quiet Day."** Neighborhood is well-designed and peaceful. Director picks nothing dramatic, just cues a softer music track and adds one extra "golden moment" particle effect at the highest-scoring sightline. *"Nothing happened today. It was perfect."*
+
+The Director is maybe 300 lines of code: a scored list of ~20 possible beats, each with a trigger condition and a behavior-override function. It picks the beat with the highest *dramatic fit score* given current state. That fit score is exactly the RimWorld trick — it's not randomness, it's curated appropriateness.
+
+This single system transforms the game from "optimize a static score" to "design a space where good things want to happen." That's a much better game and it's barely more work than what you were already building.
+
+## Traits (the minimal RimWorld version)
+
+Every resident gets exactly **one trait**, drawn from a pool of about 15. Traits modify two things: how that resident walks their routine, and how the Day Director evaluates beats involving them.
+
+Keep the pool tight and warm:
+
+- **Gardener** — visits shared gardens twice, big encounter value there
+- **Night Owl** — skips morning coffee, double-weight at fire pit
+- **Early Bird** — huge morning routine, loves mailbox cluster encounters
+- **Host** — porch becomes a stronger encounter node for anyone who passes
+- **Introvert** — penalty if facing more than 2 cottages, bonus if facing exactly 1
+- **New in Town** — needs at least 2 encounters or they become "lonely" faster
+- **Green Thumb** — treats trees as encounter nodes, not just sightline blockers
+- **Homebody** — rarely leaves porch; bonus for porches with good views
+- **Wanderer** — walks the whole path network; bonus for long connected paths
+- **Storyteller** — every encounter they're part of gets +1
+
+Traits are visible on hover. They turn the puzzle from "maximize sightlines" into "maximize sightlines *for this specific cast*." Same lot, different residents, completely different optimal layout. That's where replayability lives.
+
+RimWorld-core detail you should absolutely steal: **traits should occasionally conflict in interesting ways**. An Introvert next to a Host is a problem. A Night Owl and an Early Bird can share a cottage facing but never actually encounter each other because their routines don't overlap in time — you have to place a bench on the path between them so they bump into each other in transition. These little puzzles are where players fall in love.
+
+## Events (the cozy catastrophe layer)
+
+In RimWorld, events escalate. In Pocket Neighborhood, events *recontextualize*. Every daily seed rolls one environmental condition that changes piece values for that day:
+
+- **Rainy morning** — porches become 2× valuable, fire pit unavailable, tree sightline-blocks disabled (everyone's inside looking out)
+- **Heatwave** — trees are encounter nodes (shade), benches are 2×, fire pit penalty
+- **First frost** — fire pit is 3×, shared garden penalty
+- **Block party** — commons is 2×, every cottage must connect by path or huge penalty
+- **Moving day** — one of your residents leaves; a new one arrives mid-settle with a random trait (Director picks the beat based on the new arrival)
+- **Power's out** — no ambient lighting, the only light sources are fire pit and porches-with-lamps (unlock at score thresholds)
+- **Festival week** — two bonus pieces added to your budget for the day (string lights, food cart)
+
+These feed into the daily seed system you already planned. The seed roll determines the condition; the player adapts; the Director narrates the outcome. Three layers of variation without adding any new UI.
+
+## Memory and micro-relationships
+
+This is the smallest, highest-leverage RimWorld mechanic you can steal. **Residents remember yesterday.** Not much. Just two fields per resident:
+
+- `lastSettleEncounters`: number
+- `lastSettleDirectorBeat`: which beat (if any) they were in
+
+On today's settle, the Director reads yesterday's memory and uses it to pick beats. If Maya was the subject of yesterday's Check-In beat, today the Director won't pick her again — but it *might* pick a beat where Maya is the one checking in on someone else. ("Maya remembered how it felt.") That's a full RimWorld-style arc in 15 lines of code and it makes the daily seed feel like a continuing story instead of disconnected puzzles.
+
+Optional second layer if you have time: **friendships form** when two residents are in three encounters together across different days. Friends generate a new encounter type — "unprompted visits" — that the Director can use as a beat. You'll see it in the settle as one resident walking off-route to another's porch, a little heart, and a bonus. Friendships persist across daily seeds as long as both residents remain in the neighborhood. The neighborhood develops a *social graph* that outlives any single day.
+
+## Story cards (the output format)
+
+In RimWorld, the game gives you stories you tell your friends. In Pocket Neighborhood, the game gives you a shareable image. Merge them.
+
+After every settle, the score card isn't just a number. It's:
+
+- A screenshot of your neighborhood at the final dusk frame
+- Your score and rank
+- **Today's story** — the Director's chosen beat, rendered as a one-sentence caption
+- The day's condition icon (rainy, heatwave, etc.)
+- A single highlighted moment — the pixel coordinates of where the beat happened, with a small glowing marker
+
+This is the share asset. *"June paid Maya a visit. Score: 87. Day 12."* That tweets itself. It's also the thing that makes the game feel like you're telling stories instead of climbing a leaderboard, which is exactly the RimWorld emotional loop.
+
+## Storyteller personas (difficulty as character)
+
+Steal this one directly. RimWorld has Cassandra, Phoebe, Randy. You have:
+
+- **Ross** (after Ross Chapin) — the gentle one. Picks warm beats. Rarely does cozy catastrophes. Rewards thoughtful layout. The default.
+- **Jane** (after Jane Jacobs) — the chaotic urbanist. Loves density, surprise encounters, block parties. Picks wilder beats. Will occasionally throw a condition that wrecks your optimal layout because "cities need disruption."
+- **Chris** (after Christopher Alexander) — the patterns purist. Only picks beats that correspond to specific spatial configurations. Hardest to satisfy, highest ceiling if you understand the language.
+
+Three named storytellers, three different feels, same game. Player picks before the daily seed runs. Each one is maybe 80 lines of beat-weighting code. This is an *enormous* amount of replayability for a trivial amount of work, and naming them after actual architecture/urbanism theorists is a Tarik-only move that reinforces the design thesis.
+
+## Scope reality check
+
+Here's the honest version. What I just described is three tiers of scope. You don't ship all of it.
+
+**Tier 1 — ship this for sure (adds ~2 days to your Week 2 build):**
+- Day Director with 8–10 beats
+- Traits (15 in the pool, each resident gets one)
+- One environmental condition per daily seed
+- Story card output with beat caption
+
+This alone transforms the game. Everything else is gravy.
+
+**Tier 2 — ship if Week 2 goes smoothly (~2 more days in Week 3):**
+- Memory across days
+- Three storyteller personas
+- 5 more beats, 5 more traits
+- Expanded story card with highlighted moment
+
+**Tier 3 — only if you're somehow ahead of schedule (don't count on this):**
+- Friendship formation and persistent social graph
+- Unlockable pieces tied to story beats
+- Beat chains (multi-day arcs)
+
+If you try to ship all three tiers you will not ship anything. Lock in Tier 1 on Day 1 and treat Tier 2 as a Week 3 stretch goal you decide on April 24th based on how Tier 1 feels.
+
+## How this changes the build plan
+
+Your Week 1 doesn't change at all — still prove the vibe with one cottage and golden hour.
+
+Your Week 2 changes in one specific way: **build the Day Director second, right after you have basic pathfinding working and before you build the static scoring graph.** The Director should be the first thing that consumes neighborhood state, and static scoring should be built on top of it as a fallback for when no beat fires. Doing it in that order keeps the architecture clean. If you build static scoring first and try to bolt the Director on later, you'll end up with two competing systems fighting for control of the settle animation.
+
+Your Week 3 art pass gets harder in a good way: you now need *beat-specific visual cues*. The Check-In beat needs a different particle effect than the Potluck. Budget an extra day for this and cut one of your polish passes if you have to. The visual distinctiveness of beats is what sells the whole storyteller conceit.
+
+## Why this actually wins
+
+Pocket Neighborhood without the Director is a nice puzzle game with a cozy skin. Pocket Neighborhood with the Director is *a game about how good design creates the conditions for small kindnesses*. That's a thesis. And it's a thesis that maps exactly onto the real architecture work you're doing at Avenues West, which is the thing Chapin's pocket neighborhood theory has been saying since 1996 and which almost nobody has built a game around.
+
+The RimWorld lineage also gives you something to point at in the submission copy. Something like: *"Think RimWorld's storyteller, inverted. Instead of dramatic disasters in a space colony, it generates quiet moments of neighborliness in a cottage cluster. Same engine, opposite emotional vector."* Judges who know RimWorld — and on a levelsio-adjacent panel, they all do — will immediately understand what you're trying to do and why it's interesting. That's a massive cognitive shortcut for a 30-second judging window.
+
+---
+
+**One question that actually matters before you commit to this path:**
+
+Are you willing to let the Day Director *override* pure optimization? Meaning: a layout that's mathematically the highest-scoring static layout might not produce the best stories, and therefore won't actually win the highest final scores once the Director's bonuses are factored in. This is philosophically correct — it's what makes it a game about *design*, not *math* — but some players will hate it because it breaks the clean optimization loop.
+
+My strong vote is yes, let the Director rule. The people who want pure optimization games already have 10,000 of them. The people who want a game where good design gets rewarded with stories don't have very many, and that's your actual audience and your actual differentiation. But it's a real design decision and you should make it consciously on Day 1, not drift into it.
+
+Want me to go deeper on the Director's beat-picking algorithm, write out the full trait list with mechanical effects, or sketch the data model for memory/relationships?
+
+# Pocket Neighborhood — Systems Design Document
+
+## 1. The Day Director — beat-picking algorithm
+
+The Director runs exactly once per settle, right after the player hits the Settle button and before any resident begins walking their routine. It has one job: pick the story for today.
+
+### Architecture
+
+```
+function runDirector(state) {
+  const candidateBeats = allBeats.filter(b => b.canFire(state));
+  const scored = candidateBeats.map(b => ({
+    beat: b,
+    score: evaluateFit(b, state)
+  }));
+  const ranked = scored.sort((a, b) => b.score - a.score);
+  
+  // Top pick always fires if any candidate exists.
+  // Second pick fires only if it's compatible with first
+  // and the neighborhood is large enough (5+ cottages).
+  const primary = ranked[0] || NULL_BEAT;
+  const secondary = findCompatibleSecondary(primary, ranked, state);
+  
+  return { primary, secondary };
+}
+```
+
+That's the whole spine. The interesting work is inside `canFire` and `evaluateFit`.
+
+### canFire — the hard gate
+
+Every beat has a list of hard requirements that must be true or the beat is ineligible. This filters the candidate pool before any scoring happens, so you're never scoring beats that can't possibly work.
+
+Example — The Check-In beat:
+
+```
+canFire(state) {
+  return (
+    state.cottages.length >= 3 &&
+    state.residents.some(r => r.encounterCount === 0) &&
+    state.residents.some(r => r.trait === 'Host' || 
+                              r.trait === 'Storyteller' ||
+                              r.trait === 'Gardener') &&
+    !state.yesterday?.beatId === 'CHECK_IN'
+  );
+}
+```
+
+The last line is the memory gate — it prevents the same beat from firing two days in a row for the same subject. More on that in the memory section.
+
+### evaluateFit — the soft score
+
+This is where the Director's taste lives. Each beat has its own scoring function that looks at current state and returns a number from 0 to 100 representing how *dramatically appropriate* this beat is right now. Not how likely, not how random — how *fitting*.
+
+The scoring function for each beat combines four factors, weighted differently per beat:
+
+**Novelty** (0–25): how long since this beat last fired. A beat that hasn't fired in 5 days scores higher than one that fired yesterday. Prevents repetition without banning.
+
+**State resonance** (0–40): how strongly current state matches the beat's ideal conditions. For Check-In, this is the *loneliness score* of the most-isolated resident — the lonelier they are, the more the beat wants to fire. For Potluck, it's the total path density around the commons.
+
+**Cast fit** (0–25): how well the available residents' traits match the beat's preferred cast. A Check-In with a Host available scores higher than one with only a Wanderer. This is how traits earn their keep in the Director — they're not just routine modifiers, they're casting calls.
+
+**Storyteller bias** (0–10): the current storyteller persona's preference multiplier. Ross weights quiet beats higher. Jane weights chaotic ones. Chris weights geometrically perfect configurations.
+
+Example — Check-In fit calculation:
+
+```
+evaluateFit_CHECK_IN(state) {
+  const lonely = state.residents
+    .filter(r => r.encounterCount === 0)
+    .sort((a,b) => a.trait === 'New in Town' ? -1 : 1)[0];
+  
+  const helper = state.residents
+    .filter(r => ['Host','Storyteller','Gardener'].includes(r.trait))
+    .sort((a,b) => distance(a,lonely) - distance(b,lonely))[0];
+  
+  const daysSinceLastFire = state.history.daysSince('CHECK_IN') ?? 99;
+  
+  const novelty = Math.min(25, daysSinceLastFire * 5);
+  const resonance = lonely ? (lonely.trait === 'New in Town' ? 40 : 30) : 0;
+  const castFit = helper ? (helper.trait === 'Host' ? 25 : 18) : 0;
+  const bias = state.storyteller.weights.CHECK_IN ?? 5;
+  
+  return novelty + resonance + castFit + bias;
+}
+```
+
+Each beat has its own version of this function. They're all maybe 10–15 lines. Total Director code is ~400–500 lines across 12 beats.
+
+### The NULL_BEAT fallback
+
+If no beat has `canFire === true`, the Director returns a NULL_BEAT: "A quiet day." This is not a failure mode — it's a deliberate design choice. Quiet days are *good*. They should happen 10–15% of the time. The NULL_BEAT still produces a story card, still ticks the calendar, still counts for the score. Players learn that quiet days are the game's way of saying "you built something peaceful, nothing dramatic needed to happen here." That's the RimWorld-inversion in its purest form.
+
+### Secondary beats
+
+On neighborhoods with 5+ cottages, the Director can fire a second, smaller beat alongside the primary. Secondaries are drawn from a short list of ambient beats (a cat passes through, a delivery arrives, someone hangs laundry) that never conflict with the primary. This creates a sense of life beyond the main story — something else is always happening in the background. Cost: ~100 lines. Worth it.
+
+### The 12 beats you ship with
+
+1. **The Check-In** — A sociable resident visits a lonely neighbor.
+2. **The Accidental Meeting** — Two isolated residents with compatible traits finally meet.
+3. **The Potluck** — Dusk convergence at the commons when path density is high.
+4. **Morning Wave** — Early-risers encountering each other at the mailbox; small bonus but very warm.
+5. **Garden Club** — Two Gardeners or a Gardener + Green Thumb co-tend the shared garden.
+6. **The Storyteller's Porch** — A Storyteller resident draws two others to their porch at sunset.
+7. **The Long Walk** — A Wanderer's route creates a chain of three or more incidental encounters.
+8. **New Neighbor** — Fires on the first settle after a Moving Day event.
+9. **The Introvert's Corner** — An Introvert with a perfectly-placed single-facing porch gets a contentment bonus.
+10. **Dusk Fire** — Cold-weather variant; everyone converges at the fire pit.
+11. **The Quiet Day** (NULL_BEAT) — No drama. Peace was the point.
+12. **The Unexpected Kindness** — Rare, high-value. Fires only when the neighborhood has been peaceful for 3+ days AND a New-in-Town resident is present. Two residents you didn't expect to meet, do.
+
+Twelve is enough. Don't build 20 mediocre beats — build 12 that each feel distinct and intentional. You can add more post-jam.
+
+---
+
+## 2. The full trait list
+
+Every resident gets exactly one trait, assigned when they move in. Traits are drawn from a weighted pool — common traits are more likely than rare ones. Traits are visible on hover over a resident.
+
+Each trait specifies four things: routine modifier (how they walk their day), encounter modifier (how their encounters are valued), placement hint (what layouts reward them), and director weight (which beats they make more or less likely).
+
+### Common traits (70% of pool)
+
+**Gardener** — Visits shared gardens twice per day instead of once. Garden encounters with Gardener present are worth 1.5×. Rewards layouts with a central garden visible to multiple cottages. Unlocks: Garden Club beat.
+
+**Early Bird** — Full morning routine, skips evening fire pit. Mailbox and morning-porch encounters are worth 2×. Rewards layouts with a central mailbox cluster and porches facing east-ish. Unlocks: Morning Wave beat.
+
+**Night Owl** — Skips morning routine, extended evening at fire pit. Fire pit encounters are worth 2×. Rewards layouts with a well-placed fire pit visible to their porch. Unlocks: Dusk Fire beat.
+
+**Wanderer** — Walks the entire path network once during the day. Every bench they pass becomes an encounter node for that day. Rewards dense connected path layouts. Unlocks: The Long Walk beat.
+
+**Homebody** — Rarely leaves porch. Their porch becomes a 1.5× encounter node for anyone who passes it. Rewards placement on high-traffic path intersections. Compatible with Storyteller next door.
+
+**Host** — Their porch is a 2× encounter node but only during afternoon hours. Sociable by nature. Unlocks: The Check-In beat as the helper.
+
+**Green Thumb** — Treats trees as encounter nodes (not just sightline blockers). Small bonus (0.5× a normal encounter) per tree within 3 tiles of their porch. Rewards sprinkling trees near their cottage instead of only at sightline edges.
+
+### Uncommon traits (25% of pool)
+
+**Introvert** — Penalty (−3) if their porch has sightlines to more than 2 other porches. Bonus (+5) if it has sightlines to exactly 1. Rewards careful corner placement and tactical tree use. Compatible with Homebody. Unlocks: The Introvert's Corner beat.
+
+**Storyteller** — Every encounter they're part of gets +1 flat bonus. Draws other residents toward their porch at sunset. Unlocks: The Storyteller's Porch beat.
+
+**New in Town** — Needs at least 2 encounters or becomes Lonely faster (−8 instead of −5). Strongly weights the Check-In and New Neighbor beats. Usually lasts 3 days before transitioning to a normal trait.
+
+**Potluck Captain** — Shared garden and commons encounters with this resident present are worth 1.5×. Unlocks: Potluck beat as the catalyst. Rare but powerful in dense layouts.
+
+### Rare traits (5% of pool)
+
+**The Mayor** — Rare. One of the cottages is an implicit "community anchor." Every encounter anywhere in the neighborhood gets +0.5. Hugely valuable in large layouts; nearly wasted in small ones. If The Mayor is placed in a layout with fewer than 4 other cottages, the game shows a small "wasted on this lot" indicator.
+
+**The Old-Timer** — Rare. Remembers everyone. Any friendship that forms while The Old-Timer is in the neighborhood becomes permanent across daily seeds, not just 3+ day repeat encounters. Turns the social graph persistent faster.
+
+**The Kid** — Rare. Doesn't have a cottage of their own — lives with another resident. Adds a fourth routine beat (afternoon play at the commons) that creates encounters with anyone at the commons or on commons-adjacent paths. Spawns only in layouts with 4+ cottages and a well-connected commons.
+
+**The Ghost** — Very rare. Shows up on exactly one day. Has no cottage, no routine, no encounters. Just appears briefly in the settle animation walking from one corner of the lot to another, pauses at a random porch, leaves. Worth nothing mechanically. Produces a unique story card: *"Someone passed through. Nobody quite remembers who."* This is the kind of thing that makes people screenshot the game.
+
+### Trait interaction rules
+
+Some traits resonate or conflict when placed near each other, modifying the scoring graph directly:
+
+- **Introvert + Host adjacent** → Introvert penalty doubles. Bad placement.
+- **Gardener + Green Thumb** with a shared garden between them → both get a +3 harmony bonus.
+- **Storyteller + Homebody adjacent** → Homebody's porch node value becomes 2× instead of 1.5×. Quiet partnership.
+- **Night Owl + Early Bird** sharing a path but no overlapping time windows → no natural encounters. Requires a bench on the connecting path for them to ever meet. Design puzzle.
+- **Wanderer + any Introvert in their path** → small penalty for the Introvert each time the Wanderer passes. Place trees to block.
+
+These interactions are where replayability goes from "the daily seed is different" to "the same seed with different residents is a completely different puzzle." Don't overdo it — 5–8 interactions total. Each one should be discoverable through play, not hidden in a wiki.
+
+### Assignment logic
+
+When a resident moves into a new cottage, their trait is rolled from the pool weighted by the current neighborhood composition. If the neighborhood already has 2 Gardeners, a third Gardener is unlikely. If there's no Host, Host becomes more likely. This is soft balance — the game gently pushes toward variety without ever hard-locking options. On Moving Day events, the arriving resident always has a trait the neighborhood is currently lacking.
+
+---
+
+## 3. Memory and relationships — the data model
+
+Everything persists in `localStorage` under a single key: `pocketNeighborhood_save`. No login, no account, no backend writes except to the leaderboard endpoint for daily score submission.
+
+### The top-level shape
+
+```
+{
+  version: 1,
+  playerId: "a4f8...", // random UUID generated on first launch
+  createdAt: "2026-04-10T...",
+  
+  currentNeighborhood: Neighborhood,
+  history: SettleRecord[],
+  stats: PlayerStats,
+  settings: PlayerSettings,
+  unlocks: UnlockState
+}
+```
+
+### Neighborhood — the living state
+
+```
+Neighborhood {
+  id: string,           // stable across days; a neighborhood has a life
+  name: string,         // player-nameable, defaults to "Your Lot"
+  createdAt: date,
+  pieces: Piece[],      // current layout
+  residents: Resident[],
+  socialGraph: Friendship[],
+  daysLived: number,    // days since founded
+  storyteller: "ROSS" | "JANE" | "CHRIS"
+}
+
+Piece {
+  type: "COTTAGE" | "PORCH" | "PATH" | "GARDEN" | 
+        "FIREPIT" | "BENCH" | "MAILBOX" | "TREE",
+  position: [x, y],
+  rotation: 0 | 90 | 180 | 270,
+  residentId?: string   // only for cottages
+}
+
+Resident {
+  id: string,
+  name: string,         // from a pool of ~200 names
+  colors: [primary, secondary],
+  trait: Trait,
+  movedInOn: number,    // daysLived value when they arrived
+  lastSettle: {
+    encounterCount: number,
+    beatParticipation: BeatId | null,
+    loneliness: number,
+    contentment: number
+  } | null,
+  lifetime: {
+    totalEncounters: number,
+    totalBeats: number,
+    beatsAsSubject: BeatId[],    // beats they were the focus of
+    beatsAsHelper: BeatId[]      // beats they helped another resident through
+  }
+}
+
+Friendship {
+  residentA: string,    // id
+  residentB: string,    // id
+  strength: number,     // 1–10
+  formedOn: number,     // daysLived
+  lastEncounter: number,
+  isPermanent: boolean  // true if formed while The Old-Timer was present
+}
+```
+
+### SettleRecord — the diary
+
+Every completed settle produces one SettleRecord that's appended to history. This is what the Director reads when it checks "what happened yesterday, last week, ever."
+
+```
+SettleRecord {
+  date: "2026-04-24",
+  daysLived: 14,
+  seedHash: string,      // the daily seed this was played against
+  condition: EnvironmentalCondition,
+  storyteller: StorytellerId,
+  
+  primaryBeat: {
+    id: BeatId,
+    subjectResidentId: string,
+    helperResidentId?: string,
+    location: [x, y],
+    caption: string      // the generated one-sentence story
+  } | null,              // null means it was a Quiet Day
+  
+  secondaryBeat: { ... } | null,
+  
+  encountersTotal: number,
+  loneliestResidentId: string | null,
+  score: number,
+  rank: number,          // global leaderboard rank at time of submission
+  
+  snapshot: string       // base64 thumbnail of the final dusk frame, ~8KB
+}
+```
+
+History is capped at 60 records — two months of daily play. Older records are summarized into a `lifetimeStats` blob and dropped. This keeps localStorage small (~500KB max) and makes saves portable.
+
+### How the Director reads memory
+
+Three methods on the history object, all cheap:
+
+```
+history.daysSince(beatId)      // for novelty scoring
+history.timesFired(beatId)     // for long-term pacing
+history.residentHistory(resId) // every beat this resident was in
+```
+
+The Director's most interesting memory use is *arc detection*. If a resident has been the subject of a Check-In beat in the past 10 days, they become eligible to be the *helper* in today's Check-In — "Maya remembered how it felt." This is done by:
+
+```
+const wasRecentlyHelped = state.residents.filter(r =>
+  history.residentHistory(r.id)
+    .filter(rec => rec.date > 10daysAgo)
+    .some(rec => rec.primaryBeat?.subjectResidentId === r.id &&
+                 rec.primaryBeat?.id === 'CHECK_IN')
+);
+```
+
+Residents in `wasRecentlyHelped` get a +15 cast fit bonus when the Director is casting for a Check-In helper. That's the entire arc mechanic. Fifteen lines of code, huge emotional payoff.
+
+### Friendship formation and decay
+
+Friendships form when two residents appear together in encounters on three separate days within a 10-day window. Once formed, strength starts at 1.
+
+Every subsequent shared encounter adds 1 to strength, capped at 10. Every 5 days without a shared encounter decreases strength by 1. If strength hits 0, the friendship dissolves (unless it's permanent).
+
+Friends generate a new ambient behavior: during idle moments in the settle, one friend will occasionally walk to the other's porch for an "unprompted visit" encounter. This is scored at the encounter level but also makes the friendship visible on screen — you see your social graph playing out.
+
+Permanent friendships (formed during The Old-Timer's tenure) never decay. They're shown on the post-settle story card with a small connecting line.
+
+### What gets shared
+
+Nothing, by default. Everything is local. The only network writes are:
+
+1. Score submissions to the daily leaderboard (score + playerId + beat ID, no PII).
+2. Optional "share story card" feature that generates a PNG and opens the native share sheet.
+
+No accounts, no sync, no server-side state except the leaderboard. This matches the jam's no-login requirement exactly and keeps your backend footprint to a single Cloudflare Worker.
+
+---
+
+## 4. The player-facing description
+
+Here's the copy for the itch.io page, submission field, and first-load splash. Three registers — a one-liner, a short pitch, and the long-form describe-the-feel version.
+
+### One-liner
+
+> **Pocket Neighborhood** — A tiny cottage cluster, a shared commons, and 90 seconds to design a place where good things happen.
+
+### Short pitch (150 words, for the submission field)
+
+> Pocket Neighborhood is a cozy design puzzle about the architecture of kindness.
+>
+> Every day, you get a small lot, a handful of cottages, and eight kinds of pieces — porches, paths, a garden, a fire pit. You arrange them however you want. Then you press Settle and watch your neighborhood come alive for 25 seconds as residents walk their daily routines, wave from porches, bump into each other on paths, gather at the commons at dusk.
+>
+> A built-in storyteller watches what you built and picks one small story to tell each day. Maybe today is the day June noticed Maya hadn't been out all week. Maybe today is the potluck. Maybe today is the quiet day that was perfect anyway.
+>
+> Same seed worldwide. One scored attempt a day. No accounts. Loads in under a second.
+>
+> Built in April 2026 for Cursor Vibe Jam. Designed by an architect currently co-developing 15 real cottages in Milwaukee.
+
+### Long-form description (the itch.io body)
+
+> **What it is**
+>
+> Pocket Neighborhood is a 90-second cozy builder where you design small intentional communities and watch them live. Drop cottages around a shared commons. Face porches toward each other. Connect paths. Place a tree where you need to block a sightline. Leave space for people to bump into each other.
+>
+> Then press Settle and watch the day unfold.
+>
+> **How it plays**
+>
+> Every daily seed gives you a lot, a piece budget, a weather condition, and a cast of residents — each with one trait that changes how they move through the day. A Gardener visits the shared garden twice. A Night Owl lingers at the fire pit. An Introvert does best with exactly one porch facing theirs. A Wanderer walks the whole path network and turns every bench into an encounter.
+>
+> Your job is to read the cast and build a space that gives them reasons to meet. You're not optimizing density or money — you're optimizing for moments. Every line of sight between two porches is a potential encounter. Every path that crosses another path is a chance to say hi. Every tree can ruin a view or save one.
+>
+> **The storyteller**
+>
+> Pocket Neighborhood is built around a hidden storyteller AI inspired by RimWorld's event director, inverted into a cozy register. Where RimWorld's storyteller picks disasters, Pocket Neighborhood's picks kindnesses. Every settle, the storyteller looks at what you built and chooses one small story to tell. It might be a check-in. It might be a potluck. It might be the day two neighbors who'd never met finally did. It might be a quiet day where nothing happened and nothing needed to.
+>
+> There are three storytellers to choose from, each with their own taste:
+>
+> *Ross* — gentle, patient, picks warm beats. The default.
+> *Jane* — chaotic and urban, loves density and surprise, throws curveballs.
+> *Chris* — a patterns purist, only picks beats when the geometry is exactly right.
+>
+> **The daily loop**
+>
+> One new seed drops worldwide at midnight UTC. Everyone gets the same lot, same pieces, same residents, same weather. One scored attempt per day. Unlimited practice. Share your final neighborhood and its story as a single image.
+>
+> Your neighborhoods persist. Residents remember yesterday. Friendships form when two residents share encounters across multiple days. The storyteller reads your history and uses it — a resident who was helped last week might be the one doing the helping today.
+>
+> **The rules**
+>
+> - Loads in under a second. No accounts, no signups, no loading screens.
+> - One scored attempt per day. Practice as much as you want.
+> - Eight piece types. Fifteen traits. Twelve beats. Three storytellers. One lot.
+> - Browser only. Plays great on a phone.
+>
+> **The design thesis, if you want it**
+>
+> Good small communities work because of layered privacy and sightlines, not density. The scoring in this game is built on Ross Chapin's actual theory of pocket neighborhood design — the same theory underlying Avenues West Cottages, a 15-cottage real pocket neighborhood I'm currently co-developing in Milwaukee, breaking ground in 2027. Every eye-contact line in the game corresponds to a real design decision I'm making at the drafting table. This game is, in a real sense, the research.
+>
+> You don't need to care about any of that to play it. But it's why it exists.
+>
+> **Credits**
+>
+> Designed and directed by Tarik Moody. Built in April 2026 using Claude Code for the Cursor Vibe Jam. 90%+ of code written by AI under direction. Music and sound by [TBD]. Named residents drawn from a pool of Milwaukee neighbors, past and present.
+
+---
+
+## What to do with this document
+
+Treat it as the source of truth for Week 1 and Week 2. Before you start building on Monday, do three things:
+
+Read the beat-picking algorithm section to a rubber duck. If any beat doesn't make sense to you out loud, cut it or rewrite it before you code it. The Director's logic is the hardest part of the game to debug *after* it's built, so it's worth being sure of it *before* it's built.
+
+Print the trait list and tape it next to your monitor. Week 2 will involve a lot of "what should this edge case do" questions, and having the full trait interactions visible physically will save you from drifting into spec mismatches.
+
+Hand the data model straight to Claude Code on Day 1 as the shape to scaffold around. Don't let it improvise a schema — give it this one and make it conform. Schema drift between the Director, the residents, and the history is where this kind of game gets bugs you can't find.
+
+One more honest note: this is now a legitimately ambitious jam game. Tier 1 of the RimWorld systems (Director + traits + one condition + story cards) is still very shippable in four weeks with AI assistance and disciplined scope. But you've crossed the line from "cozy builder" into "cozy builder with a real systems spine," and that spine needs its full week 2 to come together or it'll feel undercooked. Protect week 2. Move other April commitments if you have to.
+
+Want me to go next on the Week 1 Day 1 task list — the actual concrete prompts you hand to Claude Code on Monday morning — or on the art direction reference sheet with specific color values, lighting setup, and camera math?
