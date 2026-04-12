@@ -258,19 +258,31 @@ export function createScene() {
     mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
     raycaster.setFromCamera(mouse, camera);
 
-    // Try ground first, then all scene objects
+    // Try ground first
     const groundHits = raycaster.intersectObject(ground);
-    const allHits = raycaster.intersectObjects(scene.children, true);
+    if (groundHits.length > 0) {
+      const p = groundHits[0].point;
+      const cx = Math.floor(p.x + halfGrid);
+      const cz = Math.floor(p.z + halfGrid);
+      if (cx >= 0 && cx < GRID_SIZE && cz >= 0 && cz < GRID_SIZE) {
+        return { x: cx, z: cz };
+      }
+    }
 
-    // Use ground hit if available, otherwise use closest scene hit
-    const hit = groundHits[0] || allHits[0];
-    if (!hit) return null;
+    // Fallback: intersect placed pieces (for hovering over tall objects)
+    const pieceObjects = [];
+    for (const [, mesh] of meshMap) pieceObjects.push(mesh);
+    const pieceHits = raycaster.intersectObjects(pieceObjects, true);
+    if (pieceHits.length > 0) {
+      const p = pieceHits[0].point;
+      const cx = Math.floor(p.x + halfGrid);
+      const cz = Math.floor(p.z + halfGrid);
+      if (cx >= 0 && cx < GRID_SIZE && cz >= 0 && cz < GRID_SIZE) {
+        return { x: cx, z: cz };
+      }
+    }
 
-    const p = hit.point;
-    const cx = Math.floor(p.x + halfGrid);
-    const cz = Math.floor(p.z + halfGrid);
-    if (cx < 0 || cx >= GRID_SIZE || cz < 0 || cz >= GRID_SIZE) return null;
-    return { x: cx, z: cz };
+    return null;
   }
 
   // ─── Scroll to zoom ───
