@@ -76,7 +76,7 @@ npm run build   # dist/
 
 ## The backstory
 
-This game is the design research for [Avenues West Cottages](https://avenueswestcottages.com), a 15-home real pocket neighborhood in Milwaukee, breaking ground 2027. Every eye-contact line in the game corresponds to a real design decision being made at the drafting table.
+Nearfolk grew out of an ACRE capstone project where I designed a pocket neighborhood for a site in Milwaukee. ACRE is a commercial real estate development program run by LISC Milwaukee. That project got me thinking about Ross Chapin's work on how small communities actually function, and I kept wondering what that theory would feel like as a puzzle. This game is the answer.
 
 Designed and directed by Tarik Moody. 90%+ of code written by AI (Claude Code) for the Cursor Vibe Jam.
 
