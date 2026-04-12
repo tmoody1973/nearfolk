@@ -1,10 +1,11 @@
 import {
   Scene, OrthographicCamera, WebGLRenderer,
   AmbientLight, DirectionalLight,
-  PlaneGeometry, MeshLambertMaterial, Mesh,
+  PlaneGeometry, MeshLambertMaterial, Mesh, MeshBasicMaterial,
   Color, PCFSoftShadowMap,
   Raycaster, Vector2, Vector3,
   BoxGeometry, Group, SphereGeometry, BackSide,
+  BufferGeometry, LineBasicMaterial, Line, Float32BufferAttribute,
 } from 'three';
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
@@ -456,6 +457,52 @@ export function createScene() {
     TREE: { label: 'Tree', color: '#7a9464' },
   };
 
+  // ─── Visual connections (sightlines + lonely clouds) ───
+  const connectionLines = [];
+  const lonelyMarkers = [];
+
+  function updateVisualConnections(connections, lonelyCottages) {
+    // Clear old lines
+    for (const line of connectionLines) scene.remove(line);
+    connectionLines.length = 0;
+    for (const marker of lonelyMarkers) scene.remove(marker);
+    lonelyMarkers.length = 0;
+
+    // Draw warm golden lines between connected porches
+    for (const conn of connections) {
+      const geo = new BufferGeometry();
+      const positions = new Float32Array([
+        conn.from.cx - halfGrid, 1.2, conn.from.cz - halfGrid,
+        conn.to.cx - halfGrid, 1.2, conn.to.cz - halfGrid,
+      ]);
+      geo.setAttribute('position', new Float32BufferAttribute(positions, 3));
+      const mat = new LineBasicMaterial({
+        color: 0xf4a65c,
+        transparent: true,
+        opacity: 0.5,
+        linewidth: 1,
+      });
+      const line = new Line(geo, mat);
+      scene.add(line);
+      connectionLines.push(line);
+    }
+
+    // Draw small sad cloud spheres over lonely cottages
+    for (const pos of lonelyCottages) {
+      const cloud = new Mesh(
+        new SphereGeometry(0.15, 6, 6),
+        new MeshBasicMaterial({
+          color: 0x9999aa,
+          transparent: true,
+          opacity: 0.6,
+        })
+      );
+      cloud.position.set(pos.cx - halfGrid, 2.5, pos.cz - halfGrid);
+      scene.add(cloud);
+      lonelyMarkers.push(cloud);
+    }
+  }
+
   function updateUI() {
     paletteEl.innerHTML = '';
     const types = Object.keys(PIECE_LABELS);
@@ -480,10 +527,22 @@ export function createScene() {
       paletteEl.appendChild(item);
     });
 
-    // Live score
-    const { total, breakdown } = computeScore(state.grid, state.pieces);
+    // Live score + visual connections
+    const scoreResult = computeScore(state.grid, state.pieces);
+    const { total, breakdown, connections, lonelyCottages } = scoreResult;
     scoreEl.textContent = total;
-    scoreEl.title = `Eyes: ${breakdown.eyeContactEdges || 0}×3  Nodes: ${breakdown.sharedNodeEncounters || 0}×2  Paths: ${breakdown.pathCrossings || 0}×1  Lonely: -${breakdown.lonelyResidents || 0}×5  Walls: -${breakdown.blankWallViews || 0}×1`;
+    scoreEl.title = [
+      `Eyes: ${breakdown.eyeContactEdges || 0}×3`,
+      `Nesting: ${breakdown.nestingBonuses || 0}×2`,
+      `Porches: ${breakdown.porchEncounters || 0}×2`,
+      `Nodes: ${breakdown.sharedNodeEncounters || 0}×2`,
+      `Paths: ${breakdown.pathCrossings || 0}×1`,
+      `Lonely: -${breakdown.lonelyResidents || 0}×5`,
+      `Walls: -${breakdown.blankWallViews || 0}×1`,
+    ].join('  ');
+
+    // Draw sightline connections
+    updateVisualConnections(connections, lonelyCottages);
   }
 
   updateUI();
@@ -531,6 +590,16 @@ export function createScene() {
       Math.sin(orbitAngle) * CAM_DIST
     );
     camera.lookAt(0, 0, 0);
+
+    // Lonely cloud bob
+    for (const cloud of lonelyMarkers) {
+      cloud.position.y = 2.5 + Math.sin(elapsed * 1.5 + cloud.position.x) * 0.1;
+    }
+
+    // Connection line pulse (subtle opacity breathing)
+    for (const line of connectionLines) {
+      line.material.opacity = 0.3 + Math.sin(elapsed * 2) * 0.15;
+    }
 
     // Resident walk
     const from = walkPath[walkIndex];
