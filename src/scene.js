@@ -438,11 +438,12 @@ export function createScene() {
       }
       #game-name {
         position: absolute;
-        top: 16px; left: 20px;
-        font-family: 'Lora', serif;
-        font-size: 1.3rem;
-        font-weight: 600;
-        opacity: 0.7;
+        top: 12px; left: 12px;
+      }
+      #game-logo {
+        height: 56px;
+        mix-blend-mode: screen;
+        opacity: 0.85;
       }
       #score-display {
         position: absolute;
@@ -531,7 +532,7 @@ export function createScene() {
         #mobile-controls { display: none; }
       }
     </style>
-    <div id="game-name">Nearfolk</div>
+    <div id="game-name"><img src="/logo.png" alt="Nearfolk" id="game-logo"></div>
     <div id="score-display">
       <div id="score-label">Neighborliness</div>
       <div id="score-value">0</div>
