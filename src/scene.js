@@ -1,22 +1,10 @@
 import {
-  Scene,
-  OrthographicCamera,
-  WebGLRenderer,
-  AmbientLight,
-  DirectionalLight,
-  PlaneGeometry,
-  MeshLambertMaterial,
-  Mesh,
-  Color,
-  PCFSoftShadowMap,
-  Raycaster,
-  Vector2,
-  Vector3,
-  BoxGeometry,
-  ConeGeometry,
-  Group,
-  SphereGeometry,
-  BackSide,
+  Scene, OrthographicCamera, WebGLRenderer,
+  AmbientLight, DirectionalLight,
+  PlaneGeometry, MeshLambertMaterial, Mesh,
+  Color, PCFSoftShadowMap,
+  Raycaster, Vector2, Vector3,
+  BoxGeometry, Group, SphereGeometry, BackSide,
 } from 'three';
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
@@ -25,35 +13,34 @@ import { HorizontalTiltShiftShader } from 'three/examples/jsm/shaders/Horizontal
 import { VerticalTiltShiftShader } from 'three/examples/jsm/shaders/VerticalTiltShiftShader.js';
 import { VignetteShader } from 'three/examples/jsm/shaders/VignetteShader.js';
 
-// Palette from spec §14
-const COLORS = {
-  groundSage: 0xa8b89a,
-  cottageTerracotta: 0xc97a5c,
-  cottageCream: 0xf0e4d0,
-  roofBrown: 0x8b6b4a,
-  porchWood: 0xc4a882,
-  background: 0xf5efe6,
-};
+import {
+  GRID_SIZE, PIECE_SIZES, ROTATIONS,
+  createInitialState, canPlace, placePiece, removePiece,
+  undo, redo, totalBudget,
+} from './state.js';
+import { PIECE_FACTORIES } from './pieces/index.js';
 
 export function createScene() {
-  const scene = new Scene();
-  scene.background = new Color(COLORS.background);
+  // ─── State ───
+  let state = createInitialState();
 
-  // --- Camera (orthographic isometric) ---
+  // Map piece IDs to Three.js groups for removal
+  const meshMap = new Map();
+
+  const scene = new Scene();
+  scene.background = new Color(0xf5efe6);
+
+  // ─── Camera ───
   const aspect = window.innerWidth / window.innerHeight;
   const frustumSize = 15;
   const camera = new OrthographicCamera(
-    (frustumSize * aspect) / -2,
-    (frustumSize * aspect) / 2,
-    frustumSize / 2,
-    frustumSize / -2,
-    0.1,
-    100
+    (frustumSize * aspect) / -2, (frustumSize * aspect) / 2,
+    frustumSize / 2, frustumSize / -2, 0.1, 100
   );
   camera.position.set(12, 12, 12);
   camera.lookAt(0, 0, 0);
 
-  // --- Renderer ---
+  // ─── Renderer ───
   const renderer = new WebGLRenderer({ antialias: true });
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -61,12 +48,9 @@ export function createScene() {
   renderer.shadowMap.type = PCFSoftShadowMap;
   document.body.appendChild(renderer.domElement);
 
-  // --- Lights ---
-  // Ambient: warm fill
-  const ambient = new AmbientLight(0xffe8cc, 0.4);
-  scene.add(ambient);
+  // ─── Lights ───
+  scene.add(new AmbientLight(0xffe8cc, 0.4));
 
-  // Key light: golden hour sun
   const key = new DirectionalLight(0xfff4e0, 1.0);
   key.position.set(10, 15, 8);
   key.castShadow = true;
@@ -79,170 +63,371 @@ export function createScene() {
   key.shadow.camera.bottom = -15;
   scene.add(key);
 
-  // Rim: cool counter-light
   const rim = new DirectionalLight(0x88aaff, 0.2);
   rim.position.set(-8, 5, -8);
   scene.add(rim);
 
-  // --- Ground plane (10x10 grid) ---
-  const gridSize = 10;
-  const groundGeo = new PlaneGeometry(gridSize, gridSize);
-  const groundMat = new MeshLambertMaterial({
-    color: COLORS.groundSage,
-    flatShading: true,
-  });
-  const ground = new Mesh(groundGeo, groundMat);
+  // ─── Ground ───
+  const ground = new Mesh(
+    new PlaneGeometry(GRID_SIZE, GRID_SIZE),
+    new MeshLambertMaterial({ color: 0xa8b89a, flatShading: true })
+  );
   ground.rotation.x = -Math.PI / 2;
   ground.receiveShadow = true;
   scene.add(ground);
 
-  // --- Sky sphere (warm gradient) ---
-  const skyGeo = new SphereGeometry(40, 16, 16);
-  const skyMat = new MeshLambertMaterial({
-    color: 0xf0d9bf,
-    side: BackSide,
-    flatShading: true,
-  });
-  const sky = new Mesh(skyGeo, skyMat);
+  // ─── Sky ───
+  const sky = new Mesh(
+    new SphereGeometry(40, 16, 16),
+    new MeshLambertMaterial({ color: 0xf0d9bf, side: BackSide, flatShading: true })
+  );
   scene.add(sky);
 
-  // --- Post-processing ---
+  // ─── Post-processing ───
   const composer = new EffectComposer(renderer);
   composer.addPass(new RenderPass(scene, camera));
 
-  // Tilt-shift (horizontal)
-  const hTiltShift = new ShaderPass(HorizontalTiltShiftShader);
-  hTiltShift.uniforms.h.value = 1.5 / window.innerHeight;
-  hTiltShift.uniforms.r.value = 0.4;
-  composer.addPass(hTiltShift);
+  const hTilt = new ShaderPass(HorizontalTiltShiftShader);
+  hTilt.uniforms.h.value = 1.5 / window.innerHeight;
+  hTilt.uniforms.r.value = 0.4;
+  composer.addPass(hTilt);
 
-  // Tilt-shift (vertical)
-  const vTiltShift = new ShaderPass(VerticalTiltShiftShader);
-  vTiltShift.uniforms.v.value = 1.5 / window.innerWidth;
-  vTiltShift.uniforms.r.value = 0.4;
-  composer.addPass(vTiltShift);
+  const vTilt = new ShaderPass(VerticalTiltShiftShader);
+  vTilt.uniforms.v.value = 1.5 / window.innerWidth;
+  vTilt.uniforms.r.value = 0.4;
+  composer.addPass(vTilt);
 
-  // Vignette
-  const vignette = new ShaderPass(VignetteShader);
-  vignette.uniforms.offset.value = 1.0;
-  vignette.uniforms.darkness.value = 0.8;
-  composer.addPass(vignette);
+  const vig = new ShaderPass(VignetteShader);
+  vig.uniforms.offset.value = 1.0;
+  vig.uniforms.darkness.value = 0.8;
+  composer.addPass(vig);
 
-  // --- Raycaster (ortho-corrected) ---
+  // ─── Grid hover ───
   const raycaster = new Raycaster();
   const mouse = new Vector2();
   const hoverCell = { x: -1, z: -1 };
+  const halfGrid = GRID_SIZE / 2;
 
-  // Hover highlight quad
-  const highlightGeo = new BoxGeometry(1, 0.02, 1);
-  const highlightMat = new MeshLambertMaterial({
-    color: 0xfff4e0,
-    transparent: true,
-    opacity: 0.3,
-  });
-  const highlight = new Mesh(highlightGeo, highlightMat);
+  const highlight = new Mesh(
+    new BoxGeometry(1, 0.02, 1),
+    new MeshLambertMaterial({ color: 0xfff4e0, transparent: true, opacity: 0.3 })
+  );
   highlight.visible = false;
   scene.add(highlight);
 
-  function onMouseMove(event) {
+  // Preview ghost (shows what will be placed)
+  let previewMesh = null;
+
+  function updatePreview() {
+    if (previewMesh) {
+      scene.remove(previewMesh);
+      previewMesh = null;
+    }
+
+    if (hoverCell.x < 0) return;
+    if (!canPlace(state, state.selectedType, hoverCell.x, hoverCell.z)) return;
+
+    const factory = PIECE_FACTORIES[state.selectedType];
+    if (!factory) return;
+
+    previewMesh = factory();
+    previewMesh.rotation.y = (state.rotation * Math.PI) / 180;
+
+    const size = PIECE_SIZES[state.selectedType];
+    previewMesh.position.set(
+      hoverCell.x - halfGrid + size.w / 2,
+      0,
+      hoverCell.z - halfGrid + size.h / 2
+    );
+
+    // Ghost transparency
+    previewMesh.traverse(child => {
+      if (child.isMesh && child.material) {
+        child.material = child.material.clone();
+        child.material.transparent = true;
+        child.material.opacity = 0.4;
+      }
+    });
+    scene.add(previewMesh);
+  }
+
+  function cellFromMouse(event) {
     mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
     mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
-
-    // Ortho-corrected raycasting
     raycaster.setFromCamera(mouse, camera);
-    const intersects = raycaster.intersectObject(ground);
+    const hits = raycaster.intersectObject(ground);
+    if (hits.length === 0) return null;
+    const p = hits[0].point;
+    const cx = Math.floor(p.x + halfGrid);
+    const cz = Math.floor(p.z + halfGrid);
+    if (cx < 0 || cx >= GRID_SIZE || cz < 0 || cz >= GRID_SIZE) return null;
+    return { x: cx, z: cz };
+  }
 
-    if (intersects.length > 0) {
-      const point = intersects[0].point;
-      const halfGrid = gridSize / 2;
-      const cellX = Math.floor(point.x + halfGrid);
-      const cellZ = Math.floor(point.z + halfGrid);
-
-      if (cellX >= 0 && cellX < gridSize && cellZ >= 0 && cellZ < gridSize) {
-        hoverCell.x = cellX;
-        hoverCell.z = cellZ;
-        highlight.position.set(
-          cellX - halfGrid + 0.5,
-          0.02,
-          cellZ - halfGrid + 0.5
-        );
-        highlight.visible = true;
-      } else {
-        highlight.visible = false;
-      }
+  // ─── Mouse events ───
+  window.addEventListener('mousemove', (e) => {
+    const cell = cellFromMouse(e);
+    if (cell) {
+      hoverCell.x = cell.x;
+      hoverCell.z = cell.z;
+      highlight.position.set(cell.x - halfGrid + 0.5, 0.02, cell.z - halfGrid + 0.5);
+      highlight.visible = true;
     } else {
+      hoverCell.x = -1;
+      hoverCell.z = -1;
       highlight.visible = false;
     }
-  }
-
-  window.addEventListener('mousemove', onMouseMove);
-
-  // --- Procedural cottage (2x2 base + pyramid roof) ---
-  function createCottage() {
-    const group = new Group();
-
-    // Base (2x2x1.5)
-    const baseGeo = new BoxGeometry(1.8, 1.2, 1.8);
-    const baseMat = new MeshLambertMaterial({
-      color: COLORS.cottageCream,
-      flatShading: true,
-    });
-    const base = new Mesh(baseGeo, baseMat);
-    base.position.y = 0.6;
-    base.castShadow = true;
-    base.receiveShadow = true;
-    group.add(base);
-
-    // Roof (pyramid)
-    const roofGeo = new ConeGeometry(1.4, 0.8, 4);
-    const roofMat = new MeshLambertMaterial({
-      color: COLORS.roofBrown,
-      flatShading: true,
-    });
-    const roof = new Mesh(roofGeo, roofMat);
-    roof.position.y = 1.6;
-    roof.rotation.y = Math.PI / 4;
-    roof.castShadow = true;
-    group.add(roof);
-
-    // Porch (front face indicator)
-    const porchGeo = new BoxGeometry(1.8, 0.1, 0.4);
-    const porchMat = new MeshLambertMaterial({
-      color: COLORS.porchWood,
-      flatShading: true,
-    });
-    const porch = new Mesh(porchGeo, porchMat);
-    porch.position.set(0, 0.05, 1.1);
-    group.add(porch);
-
-    return group;
-  }
-
-  // Place one demo cottage
-  const cottage = createCottage();
-  cottage.position.set(0, 0, 0);
-  scene.add(cottage);
-
-  // --- Resident (capsule + sphere head) ---
-  // Simple cylinder body + sphere head for now
-  const residentGroup = new Group();
-
-  const bodyGeo = new BoxGeometry(0.2, 0.4, 0.2);
-  const bodyMat = new MeshLambertMaterial({
-    color: COLORS.cottageTerracotta,
-    flatShading: true,
+    updatePreview();
   });
-  const body = new Mesh(bodyGeo, bodyMat);
+
+  // Left-click: place piece
+  window.addEventListener('click', (e) => {
+    if (e.button !== 0) return;
+    if (hoverCell.x < 0) return;
+    if (!canPlace(state, state.selectedType, hoverCell.x, hoverCell.z)) return;
+
+    const type = state.selectedType;
+    const rotation = state.rotation;
+    const x = hoverCell.x;
+    const z = hoverCell.z;
+
+    state = placePiece(state, type, x, z, rotation);
+    const placed = state.pieces[state.pieces.length - 1];
+
+    // Create mesh
+    const mesh = PIECE_FACTORIES[type]();
+    mesh.rotation.y = (rotation * Math.PI) / 180;
+    const size = PIECE_SIZES[type];
+    mesh.position.set(x - halfGrid + size.w / 2, 0, z - halfGrid + size.h / 2);
+    scene.add(mesh);
+    meshMap.set(placed.id, mesh);
+
+    updatePreview();
+    updateUI();
+  });
+
+  // Right-click: remove piece under cursor
+  window.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    if (hoverCell.x < 0) return;
+
+    const pieceId = state.grid[hoverCell.x][hoverCell.z];
+    if (pieceId === null) return;
+
+    const mesh = meshMap.get(pieceId);
+    if (mesh) {
+      scene.remove(mesh);
+      meshMap.delete(pieceId);
+    }
+    state = removePiece(state, pieceId);
+    updatePreview();
+    updateUI();
+  });
+
+  // ─── Keyboard ───
+  window.addEventListener('keydown', (e) => {
+    // R: rotate
+    if (e.key === 'r' || e.key === 'R') {
+      const idx = ROTATIONS.indexOf(state.rotation);
+      state = { ...state, rotation: ROTATIONS[(idx + 1) % ROTATIONS.length] };
+      updatePreview();
+    }
+
+    // Ctrl+Z: undo
+    if ((e.metaKey || e.ctrlKey) && e.key === 'z' && !e.shiftKey) {
+      e.preventDefault();
+      syncStateToScene(undo(state));
+    }
+
+    // Ctrl+Shift+Z or Ctrl+Y: redo
+    if ((e.metaKey || e.ctrlKey) && (e.key === 'Z' || e.key === 'y')) {
+      e.preventDefault();
+      syncStateToScene(redo(state));
+    }
+
+    // Number keys 1-8: select piece type
+    const types = ['COTTAGE', 'PORCH', 'PATH', 'GARDEN', 'FIREPIT', 'BENCH', 'MAILBOX', 'TREE'];
+    const num = parseInt(e.key);
+    if (num >= 1 && num <= 8) {
+      state = { ...state, selectedType: types[num - 1] };
+      updatePreview();
+      updateUI();
+    }
+  });
+
+  // Rebuild all meshes from state (for undo/redo)
+  function syncStateToScene(newState) {
+    // Remove all existing piece meshes
+    for (const [id, mesh] of meshMap) {
+      scene.remove(mesh);
+    }
+    meshMap.clear();
+
+    state = newState;
+
+    // Recreate all meshes
+    for (const piece of state.pieces) {
+      const mesh = PIECE_FACTORIES[piece.type]();
+      mesh.rotation.y = (piece.rotation * Math.PI) / 180;
+      const size = PIECE_SIZES[piece.type];
+      mesh.position.set(
+        piece.x - halfGrid + size.w / 2, 0,
+        piece.z - halfGrid + size.h / 2
+      );
+      scene.add(mesh);
+      meshMap.set(piece.id, mesh);
+    }
+    updatePreview();
+    updateUI();
+  }
+
+  // ─── UI overlay ───
+  const uiContainer = document.createElement('div');
+  uiContainer.id = 'game-ui';
+  uiContainer.innerHTML = `
+    <style>
+      #game-ui {
+        position: fixed;
+        top: 0; left: 0; right: 0; bottom: 0;
+        pointer-events: none;
+        font-family: 'Nunito', sans-serif;
+        color: #6b4e3a;
+        z-index: 10;
+      }
+      #game-name {
+        position: absolute;
+        top: 16px; left: 20px;
+        font-family: 'Lora', serif;
+        font-size: 1.3rem;
+        font-weight: 600;
+        opacity: 0.7;
+      }
+      #score-display {
+        position: absolute;
+        top: 16px; right: 20px;
+        text-align: right;
+      }
+      #score-label { font-size: 0.75rem; opacity: 0.6; }
+      #score-value {
+        font-family: 'Lora', serif;
+        font-size: 2.5rem;
+        font-weight: 700;
+        line-height: 1;
+      }
+      #piece-palette {
+        position: absolute;
+        top: 50%;
+        left: 16px;
+        transform: translateY(-50%);
+        background: rgba(240, 228, 208, 0.85);
+        border-radius: 12px;
+        padding: 8px;
+        pointer-events: auto;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+      .palette-item {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 10px;
+        border-radius: 8px;
+        cursor: pointer;
+        font-size: 0.85rem;
+        font-weight: 600;
+        transition: background 0.15s;
+        user-select: none;
+      }
+      .palette-item:hover { background: rgba(139, 107, 74, 0.1); }
+      .palette-item.selected { background: rgba(139, 107, 74, 0.2); }
+      .palette-item.exhausted { opacity: 0.3; pointer-events: none; }
+      .palette-count {
+        margin-left: auto;
+        font-size: 0.75rem;
+        opacity: 0.6;
+      }
+      .palette-icon {
+        width: 20px; height: 20px;
+        border-radius: 4px;
+      }
+      #controls-hint {
+        position: absolute;
+        bottom: 16px;
+        left: 50%;
+        transform: translateX(-50%);
+        font-size: 0.7rem;
+        opacity: 0.4;
+      }
+    </style>
+    <div id="game-name">Nearfolk</div>
+    <div id="score-display">
+      <div id="score-label">Neighborliness</div>
+      <div id="score-value">0</div>
+    </div>
+    <div id="piece-palette"></div>
+    <div id="controls-hint">Click to place · R to rotate · Right-click to remove · Ctrl+Z to undo · 1-8 to select</div>
+  `;
+  document.body.appendChild(uiContainer);
+
+  const paletteEl = document.getElementById('piece-palette');
+  const scoreEl = document.getElementById('score-value');
+
+  const PIECE_LABELS = {
+    COTTAGE: { label: 'Cottage', color: '#f0e4d0' },
+    PORCH: { label: 'Porch', color: '#c4a882' },
+    PATH: { label: 'Path', color: '#c8b89c' },
+    GARDEN: { label: 'Garden', color: '#7a9464' },
+    FIREPIT: { label: 'Fire Pit', color: '#f4a65c' },
+    BENCH: { label: 'Bench', color: '#c4a882' },
+    MAILBOX: { label: 'Mailbox', color: '#c97a5c' },
+    TREE: { label: 'Tree', color: '#7a9464' },
+  };
+
+  function updateUI() {
+    paletteEl.innerHTML = '';
+    const types = Object.keys(PIECE_LABELS);
+    types.forEach((type, i) => {
+      const info = PIECE_LABELS[type];
+      const count = state.budget[type];
+      const item = document.createElement('div');
+      item.className = 'palette-item';
+      if (type === state.selectedType) item.classList.add('selected');
+      if (count <= 0) item.classList.add('exhausted');
+      item.innerHTML = `
+        <div class="palette-icon" style="background:${info.color}"></div>
+        <span>${info.label}</span>
+        <span class="palette-count">${count}</span>
+      `;
+      item.addEventListener('click', () => {
+        if (count <= 0) return;
+        state = { ...state, selectedType: type };
+        updatePreview();
+        updateUI();
+      });
+      paletteEl.appendChild(item);
+    });
+
+    // Score (placeholder 0 until scoring.js is built)
+    scoreEl.textContent = '0';
+  }
+
+  updateUI();
+
+  // ─── Resident (demo walker) ───
+  const residentGroup = new Group();
+  const body = new Mesh(
+    new BoxGeometry(0.2, 0.4, 0.2),
+    new MeshLambertMaterial({ color: 0xc97a5c, flatShading: true })
+  );
   body.position.y = 0.3;
   body.castShadow = true;
   residentGroup.add(body);
 
-  const headGeo = new BoxGeometry(0.15, 0.15, 0.15);
-  const headMat = new MeshLambertMaterial({
-    color: COLORS.cottageCream,
-    flatShading: true,
-  });
-  const head = new Mesh(headGeo, headMat);
+  const head = new Mesh(
+    new BoxGeometry(0.15, 0.15, 0.15),
+    new MeshLambertMaterial({ color: 0xf0e4d0, flatShading: true })
+  );
   head.position.y = 0.58;
   head.castShadow = true;
   residentGroup.add(head);
@@ -250,23 +435,18 @@ export function createScene() {
   residentGroup.position.set(0, 0, 2);
   scene.add(residentGroup);
 
-  // Resident walk path (hardcoded for demo)
   const walkPath = [
-    new Vector3(0, 0, 2),
-    new Vector3(2, 0, 2),
-    new Vector3(2, 0, -1),
-    new Vector3(0, 0, -1),
+    new Vector3(0, 0, 2), new Vector3(2, 0, 2),
+    new Vector3(2, 0, -1), new Vector3(0, 0, -1),
   ];
   let walkIndex = 0;
   let walkProgress = 0;
-  const walkSpeed = 0.5;
 
-  // --- Animation loop ---
+  // ─── Animation loop ───
   const startTime = performance.now();
 
   function animate() {
     requestAnimationFrame(animate);
-
     const elapsed = (performance.now() - startTime) / 1000;
 
     // Camera breathing
@@ -276,15 +456,12 @@ export function createScene() {
     // Resident walk
     const from = walkPath[walkIndex];
     const to = walkPath[(walkIndex + 1) % walkPath.length];
-    walkProgress += walkSpeed * 0.016;
-
+    walkProgress += 0.5 * 0.016;
     if (walkProgress >= 1) {
       walkProgress = 0;
       walkIndex = (walkIndex + 1) % walkPath.length;
     }
-
     residentGroup.position.lerpVectors(from, to, walkProgress);
-    // Bob walk
     residentGroup.position.y = Math.sin(elapsed * 8) * 0.05;
 
     composer.render();
@@ -292,17 +469,17 @@ export function createScene() {
 
   animate();
 
-  // --- Resize handler ---
+  // ─── Resize ───
   window.addEventListener('resize', () => {
-    const newAspect = window.innerWidth / window.innerHeight;
-    camera.left = (frustumSize * newAspect) / -2;
-    camera.right = (frustumSize * newAspect) / 2;
+    const a = window.innerWidth / window.innerHeight;
+    camera.left = (frustumSize * a) / -2;
+    camera.right = (frustumSize * a) / 2;
     camera.top = frustumSize / 2;
     camera.bottom = frustumSize / -2;
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
     composer.setSize(window.innerWidth, window.innerHeight);
-    hTiltShift.uniforms.h.value = 1.5 / window.innerHeight;
-    vTiltShift.uniforms.v.value = 1.5 / window.innerWidth;
+    hTilt.uniforms.h.value = 1.5 / window.innerHeight;
+    vTilt.uniforms.v.value = 1.5 / window.innerWidth;
   });
 }
