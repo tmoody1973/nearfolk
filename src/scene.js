@@ -1379,6 +1379,34 @@ export function createScene() {
 
   document.getElementById('story-close').addEventListener('click', () => {
     storyCardEl.classList.add('hidden');
+
+    // Remove any rank display from previous settle
+    const rankEl = document.getElementById('story-rank');
+    if (rankEl) rankEl.remove();
+
+    // Day transition: refresh budget with 2-3 extra pieces
+    if (currentDay <= MAX_DAYS) {
+      const refreshPieces = ['PATH', 'PATH', 'BENCH', 'TREE', 'PORCH'];
+      const count = 2 + Math.floor(Math.random() * 2); // 2-3 pieces
+      for (let i = 0; i < count; i++) {
+        const type = refreshPieces[Math.floor(Math.random() * refreshPieces.length)];
+        state = {
+          ...state,
+          budget: {
+            ...state.budget,
+            [type]: (state.budget[type] || 0) + 1,
+          },
+        };
+      }
+      updateUI();
+    }
+
+    // Check if session is complete (5 days)
+    if (currentDay > MAX_DAYS) {
+      // Show final journal overlay
+      updateJournalUI(memory.journal);
+      showJournal();
+    }
   });
 
   // ─── Journal ───
