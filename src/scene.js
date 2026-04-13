@@ -70,30 +70,42 @@ export function createScene() {
   const scene = new Scene();
   scene.background = new Color(0xf5efe6);
 
-  // ─── Camera (zoom + orbit) ───
+  // ─── Camera (smooth zoom + orbit) ───
+  // Targets are set by input, actual values lerp toward targets each frame
   const aspect = window.innerWidth / window.innerHeight;
-  let zoom = 15;          // frustum size (smaller = zoomed in)
-  const ZOOM_MIN = 6;
-  const ZOOM_MAX = 22;
-  let orbitAngle = Math.PI / 4;  // 45 degrees (default iso)
+  const FRUSTUM = 15;
+  const ZOOM_MIN = 0.5;
+  const ZOOM_MAX = 2.5;
   const CAM_HEIGHT = 12;
   const CAM_DIST = 12;
 
+  let targetZoom = 1.0;
+  let currentZoom = 1.0;
+  let targetOrbitAngle = Math.PI / 4;
+  let currentOrbitAngle = Math.PI / 4;
+  const LERP_SPEED = 0.08; // Smooth interpolation factor
+
   const camera = new OrthographicCamera(
-    (zoom * aspect) / -2, (zoom * aspect) / 2,
-    zoom / 2, zoom / -2, 0.1, 100
+    (FRUSTUM * aspect) / -2, (FRUSTUM * aspect) / 2,
+    FRUSTUM / 2, FRUSTUM / -2, 0.1, 100
   );
+  camera.zoom = currentZoom;
 
   function updateCamera() {
+    // Smooth lerp toward targets
+    currentZoom += (targetZoom - currentZoom) * LERP_SPEED;
+    currentOrbitAngle += (targetOrbitAngle - currentOrbitAngle) * LERP_SPEED;
+
     const a = window.innerWidth / window.innerHeight;
-    camera.left = (zoom * a) / -2;
-    camera.right = (zoom * a) / 2;
-    camera.top = zoom / 2;
-    camera.bottom = zoom / -2;
+    camera.left = (FRUSTUM * a) / -2;
+    camera.right = (FRUSTUM * a) / 2;
+    camera.top = FRUSTUM / 2;
+    camera.bottom = FRUSTUM / -2;
+    camera.zoom = currentZoom;
     camera.position.set(
-      Math.cos(orbitAngle) * CAM_DIST,
+      Math.cos(currentOrbitAngle) * CAM_DIST,
       CAM_HEIGHT,
-      Math.sin(orbitAngle) * CAM_DIST
+      Math.sin(currentOrbitAngle) * CAM_DIST
     );
     camera.lookAt(0, 0, 0);
     camera.updateProjectionMatrix();
@@ -321,9 +333,8 @@ export function createScene() {
   // ─── Scroll to zoom ───
   window.addEventListener('wheel', (e) => {
     e.preventDefault();
-    zoom += e.deltaY * 0.01;
-    zoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, zoom));
-    updateCamera();
+    targetZoom -= e.deltaY * 0.002;
+    targetZoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, targetZoom));
   }, { passive: false });
 
   // ─── Middle-click to rotate placed piece ───
@@ -508,12 +519,10 @@ export function createScene() {
 
     // Q/E: orbit camera
     if (e.key === 'q' || e.key === 'Q') {
-      orbitAngle -= Math.PI / 4;
-      updateCamera();
+      targetOrbitAngle -= Math.PI / 4;
     }
     if (e.key === 'e' || e.key === 'E') {
-      orbitAngle += Math.PI / 4;
-      updateCamera();
+      targetOrbitAngle += Math.PI / 4;
     }
 
     // T: rotate placed piece under cursor
@@ -932,22 +941,34 @@ export function createScene() {
     lonelyMarkers.length = 0;
 
     // Draw warm golden lines between connected porches
+    // Using thin box meshes instead of Line (Line is 1px on most GPUs)
     for (const conn of connections) {
-      const geo = new BufferGeometry();
-      const positions = new Float32Array([
-        conn.from.cx - halfGrid, 1.2, conn.from.cz - halfGrid,
-        conn.to.cx - halfGrid, 1.2, conn.to.cz - halfGrid,
-      ]);
-      geo.setAttribute('position', new Float32BufferAttribute(positions, 3));
-      const mat = new LineBasicMaterial({
+      const fromX = conn.from.cx - halfGrid;
+      const fromZ = conn.from.cz - halfGrid;
+      const toX = conn.to.cx - halfGrid;
+      const toZ = conn.to.cz - halfGrid;
+
+      const dx = toX - fromX;
+      const dz = toZ - fromZ;
+      const length = Math.sqrt(dx * dx + dz * dz);
+      const angle = Math.atan2(dx, dz);
+
+      // Thin glowing box as the sightline
+      const lineGeo = new BoxGeometry(0.06, 0.06, length);
+      const lineMat = new MeshBasicMaterial({
         color: 0xf4a65c,
         transparent: true,
-        opacity: 0.5,
-        linewidth: 1,
+        opacity: 0.6,
       });
-      const line = new Line(geo, mat);
-      scene.add(line);
-      connectionLines.push(line);
+      const lineMesh = new Mesh(lineGeo, lineMat);
+      lineMesh.position.set(
+        (fromX + toX) / 2,
+        1.2,
+        (fromZ + toZ) / 2
+      );
+      lineMesh.rotation.y = angle;
+      scene.add(lineMesh);
+      connectionLines.push(lineMesh);
     }
 
     // Draw small sad cloud spheres over lonely cottages
@@ -1022,8 +1043,15 @@ export function createScene() {
     const scoreResult = computeScore(state.grid, state.pieces);
     const { total, breakdown, connections, lonelyCottages } = scoreResult;
     const prevScore = parseInt(scoreEl.textContent) || 0;
-    if (total !== prevScore && total > prevScore) {
-      playScoreTick(total);
+    if (total !== prevScore) {
+      if (total > prevScore) playScoreTick(total);
+      // Score pop animation
+      scoreEl.style.transform = 'scale(1.3)';
+      scoreEl.style.transition = 'transform 0.15s ease-out';
+      setTimeout(() => {
+        scoreEl.style.transform = 'scale(1)';
+        scoreEl.style.transition = 'transform 0.3s ease-in';
+      }, 150);
     }
     scoreEl.textContent = total;
     scoreEl.title = [
@@ -1336,14 +1364,9 @@ export function createScene() {
     requestAnimationFrame(animate);
     const elapsed = (performance.now() - startTime) / 1000;
 
-    // Camera breathing (gentle Y oscillation on top of orbit position)
-    const breathY = Math.sin(elapsed * 0.3) * 0.1;
-    camera.position.set(
-      Math.cos(orbitAngle) * CAM_DIST,
-      CAM_HEIGHT + breathY,
-      Math.sin(orbitAngle) * CAM_DIST
-    );
-    camera.lookAt(0, 0, 0);
+    // Smooth camera update + breathing
+    updateCamera();
+    camera.position.y += Math.sin(elapsed * 0.3) * 0.1;
 
     // Lonely cloud bob
     for (const cloud of lonelyMarkers) {
@@ -1351,8 +1374,8 @@ export function createScene() {
     }
 
     // Connection line pulse (subtle opacity breathing)
-    for (const line of connectionLines) {
-      line.material.opacity = 0.3 + Math.sin(elapsed * 2) * 0.15;
+    for (const conn of connectionLines) {
+      if (conn.material) conn.material.opacity = 0.4 + Math.sin(elapsed * 2) * 0.2;
     }
 
     // Timer update
