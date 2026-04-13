@@ -1,29 +1,29 @@
 // Nearfolk Neighborhood Memory
 //
-// Persistent state that tracks the neighborhood's social history.
-// The Director reads this to tell stories that chain across days.
-// Inspired by RimWorld's colonist mood + relationship system,
-// inverted for kindness.
+// Full RimWorld-style mood + relationship + thought system,
+// inverted for the architecture of kindness.
+//
+// Key systems:
+// 1. Stacking thoughts with decay (not a single contentment number)
+// 2. Named social interactions (garden chat, porch coffee, etc.)
+// 3. View quality per cottage (what the porch can see)
+// 4. Relationship strength between pairs
+// 5. Beat history for Director arc detection
+// 6. Inspiration triggers from high contentment
 //
 // Pure data. No Three.js. Persists to localStorage.
 
 const STORAGE_KEY = 'nearfolk_memory';
 
-// Contentment rules:
-//   Start at 50
-//   +10 per encounter during settle
-//   +5 per eye-contact sightline
-//   -15 if lonely (no encounters, no sightlines)
-//   -5 per round with no encounters
-//   Capped 0-100
-
 export function createMemory() {
   return {
     days: 0,
-    contentment: {},      // residentId -> number (0-100)
-    relationships: {},    // "idA:idB" -> number (encounter count)
-    beatHistory: [],      // array of { day, beatId, subjectId, helperId, caption, score }
-    journal: [],          // array of { date, day, beatName, caption, score, residentCount }
+    thoughts: {},         // residentId -> array of { reason, value, decayDays, day }
+    relationships: {},    // "idA:idB" -> { strength, interactions: [] }
+    beatHistory: [],
+    journal: [],
+    condition: null,      // current environmental condition
+    encounters: [],       // last settle's named encounters
   };
 }
 
@@ -31,103 +31,142 @@ function pairKey(idA, idB) {
   return [idA, idB].sort().join(':');
 }
 
-// Initialize contentment for a new resident
-export function initResident(memory, residentId) {
+// ─── Thought system ───
+// Each thought has: reason (string), value (+/-), decayDays (how long it lasts), day (when added)
+
+export function addThought(memory, residentId, reason, value, decayDays) {
+  const thoughts = memory.thoughts[residentId] || [];
+  // Don't stack duplicate ongoing reasons
+  const existing = thoughts.find(t => t.reason === reason && t.decayDays === -1);
+  if (existing) {
+    existing.value = value; // Update ongoing thought
+    return { ...memory, thoughts: { ...memory.thoughts, [residentId]: [...thoughts] } };
+  }
   return {
     ...memory,
-    contentment: { ...memory.contentment, [residentId]: 50 },
+    thoughts: {
+      ...memory.thoughts,
+      [residentId]: [...thoughts, { reason, value, decayDays, day: memory.days }],
+    },
   };
 }
 
-// Update memory after a settle round
-// encounters: array of { residentA, residentB } pairs that met
-// sightlines: array of { fromId, toId } eye-contact pairs
-// lonelyIds: array of resident IDs with zero connections
-// beat: { id, name, subjectId, helperId, caption }
-// score: number
-export function recordDay(memory, encounters, sightlines, lonelyIds, beat, score, residentCount) {
-  const newContentment = { ...memory.contentment };
-  const newRelationships = { ...memory.relationships };
-  const day = memory.days + 1;
-
-  // Track who had any encounters
-  const hadEncounter = new Set();
-
-  // Process encounters: boost contentment + relationship
-  for (const enc of encounters) {
-    hadEncounter.add(enc.residentA);
-    hadEncounter.add(enc.residentB);
-
-    // Contentment boost
-    newContentment[enc.residentA] = Math.min(100,
-      (newContentment[enc.residentA] || 50) + 10);
-    newContentment[enc.residentB] = Math.min(100,
-      (newContentment[enc.residentB] || 50) + 10);
-
-    // Relationship strength
-    const pk = pairKey(enc.residentA, enc.residentB);
-    newRelationships[pk] = (newRelationships[pk] || 0) + 1;
+export function decayThoughts(memory) {
+  const newThoughts = {};
+  for (const [id, thoughts] of Object.entries(memory.thoughts)) {
+    newThoughts[id] = thoughts.filter(t => {
+      if (t.decayDays === -1) return true; // Ongoing, doesn't decay
+      return (memory.days - t.day) < t.decayDays;
+    });
   }
+  return { ...memory, thoughts: newThoughts };
+}
 
-  // Process sightlines: small contentment boost
-  for (const sl of sightlines) {
-    hadEncounter.add(sl.fromId);
-    hadEncounter.add(sl.toId);
-    newContentment[sl.fromId] = Math.min(100,
-      (newContentment[sl.fromId] || 50) + 5);
-    newContentment[sl.toId] = Math.min(100,
-      (newContentment[sl.toId] || 50) + 5);
-  }
+export function getContentment(memory, residentId) {
+  const thoughts = memory.thoughts[residentId] || [];
+  const sum = thoughts.reduce((acc, t) => acc + t.value, 0);
+  return Math.max(0, Math.min(100, 50 + sum)); // Base 50 + thoughts
+}
 
-  // Beat participants get bonus
-  if (beat.subjectId) {
-    hadEncounter.add(beat.subjectId);
-    newContentment[beat.subjectId] = Math.min(100,
-      (newContentment[beat.subjectId] || 50) + 10);
+export function getThoughts(memory, residentId) {
+  return memory.thoughts[residentId] || [];
+}
+
+export function getLowestContentment(memory, residentIds) {
+  let lowest = null;
+  let lowestVal = 101;
+  for (const id of residentIds) {
+    const val = getContentment(memory, id);
+    if (val < lowestVal) { lowestVal = val; lowest = id; }
   }
-  if (beat.helperId) {
-    hadEncounter.add(beat.helperId);
-    newContentment[beat.helperId] = Math.min(100,
-      (newContentment[beat.helperId] || 50) + 10);
-    // Beat participants build relationship
-    if (beat.subjectId) {
-      const pk = pairKey(beat.subjectId, beat.helperId);
-      newRelationships[pk] = (newRelationships[pk] || 0) + 3;
+  return { id: lowest, contentment: lowestVal };
+}
+
+// ─── View quality ───
+// Computed from what a cottage's porch can see (raycasted in scoring.js)
+
+export const VIEW_SOURCES = {
+  COMMONS: { value: 3, reason: 'Commons view' },
+  GARDEN: { value: 2, reason: 'Garden view' },
+  FIREPIT: { value: 1, reason: 'Fire pit view' },
+  PORCH: { value: 2, reason: 'Neighbor visible' },
+  TREE: { value: 1, reason: 'Tree view' },
+  BLANK_WALL: { value: -2, reason: 'Facing a wall' },
+  EDGE: { value: -1, reason: 'Facing the edge' },
+  NOTHING: { value: -5, reason: 'Facing nothing' },
+};
+
+export function setViewThoughts(memory, residentId, viewSources) {
+  // Remove old view thoughts
+  let thoughts = (memory.thoughts[residentId] || []).filter(t => !t.reason.endsWith('view') && !t.reason.startsWith('Facing') && !t.reason.startsWith('Neighbor') && !t.reason.startsWith('Commons') && !t.reason.startsWith('Garden') && !t.reason.startsWith('Fire pit') && !t.reason.startsWith('Tree'));
+
+  // Add new view thoughts (ongoing, decay = -1)
+  for (const src of viewSources) {
+    const info = VIEW_SOURCES[src];
+    if (info) {
+      thoughts.push({ reason: info.reason, value: info.value, decayDays: -1, day: memory.days });
     }
   }
 
-  // Lonely residents lose contentment
-  for (const id of lonelyIds) {
-    if (!hadEncounter.has(id)) {
-      newContentment[id] = Math.max(0,
-        (newContentment[id] || 50) - 15);
-    }
-  }
+  return { ...memory, thoughts: { ...memory.thoughts, [residentId]: thoughts } };
+}
 
-  // Anyone not in any encounter loses a small amount
-  for (const id of Object.keys(newContentment)) {
-    if (!hadEncounter.has(id)) {
-      newContentment[id] = Math.max(0, newContentment[id] - 5);
-    }
-  }
+// ─── Named social interactions ───
 
-  // Relationship decay (every 5 days, -1 for pairs with no recent encounter)
-  if (day % 5 === 0) {
-    for (const pk of Object.keys(newRelationships)) {
-      // Only decay if not active this round
+export const INTERACTION_TYPES = {
+  GARDEN_CHAT: { name: 'garden chat', value: 3, emoji: '🌱' },
+  MORNING_WAVE: { name: 'morning wave', value: 2, emoji: '👋' },
+  FIRE_PIT_STORY: { name: 'fire pit story', value: 5, emoji: '🔥' },
+  PORCH_COFFEE: { name: 'porch coffee', value: 4, emoji: '☕' },
+  PASSING_HELLO: { name: 'passing hello', value: 1, emoji: '🚶' },
+  BENCH_CHAT: { name: 'bench chat', value: 2, emoji: '💬' },
+};
+
+export function recordInteraction(memory, residentA, residentB, type, day) {
+  const pk = pairKey(residentA, residentB);
+  const rel = memory.relationships[pk] || { strength: 0, interactions: [] };
+  const interactionInfo = INTERACTION_TYPES[type] || { name: type, value: 1 };
+
+  const newRel = {
+    strength: rel.strength + interactionInfo.value,
+    interactions: [...rel.interactions, { type, day, nameA: residentA, nameB: residentB }].slice(-20),
+  };
+
+  // Add thoughts to both residents
+  let mem = { ...memory, relationships: { ...memory.relationships, [pk]: newRel } };
+  mem = addThought(mem, residentA, interactionInfo.name, interactionInfo.value, 3);
+  mem = addThought(mem, residentB, interactionInfo.name, interactionInfo.value, 3);
+
+  // Track encounter
+  const encounter = { residentA, residentB, type: interactionInfo.name, emoji: interactionInfo.emoji, day };
+  mem = { ...mem, encounters: [...(mem.encounters || []), encounter] };
+
+  return mem;
+}
+
+// ─── Relationships ───
+
+export function getRelationshipStrength(memory, idA, idB) {
+  const rel = memory.relationships[pairKey(idA, idB)];
+  return rel ? rel.strength : 0;
+}
+
+export function getFriendPairs(memory, minStrength = 3) {
+  const pairs = [];
+  for (const [pk, rel] of Object.entries(memory.relationships)) {
+    if (rel.strength >= minStrength) {
       const [a, b] = pk.split(':');
-      const wasActive = encounters.some(e =>
-        pairKey(e.residentA, e.residentB) === pk
-      );
-      if (!wasActive && newRelationships[pk] > 0) {
-        newRelationships[pk] = Math.max(0, newRelationships[pk] - 1);
-      }
+      pairs.push({ a, b, strength: rel.strength });
     }
   }
+  return pairs;
+}
 
-  // Record beat
+// ─── Beat history ───
+
+export function recordBeat(memory, beat, score, residentCount) {
   const beatRecord = {
-    day,
+    day: memory.days + 1,
     beatId: beat.id,
     subjectId: beat.subjectId || null,
     helperId: beat.helperId || null,
@@ -135,33 +174,35 @@ export function recordDay(memory, encounters, sightlines, lonelyIds, beat, score
     score,
   };
 
-  // Journal entry
   const journalEntry = {
     date: new Date().toISOString().split('T')[0],
-    day,
+    day: memory.days + 1,
     beatName: beat.name,
     caption: beat.caption,
     score,
     residentCount,
+    encounterCount: (memory.encounters || []).length,
+    encounters: (memory.encounters || []).slice(0, 5).map(e =>
+      `${e.emoji} ${e.type}`
+    ),
   };
 
   return {
-    days: day,
-    contentment: newContentment,
-    relationships: newRelationships,
-    beatHistory: [...memory.beatHistory, beatRecord].slice(-30), // keep last 30
-    journal: [...memory.journal, journalEntry].slice(-60), // keep last 60
+    ...memory,
+    days: memory.days + 1,
+    beatHistory: [...memory.beatHistory, beatRecord].slice(-30),
+    journal: [...memory.journal, journalEntry].slice(-60),
+    encounters: [], // Reset for next day
   };
 }
 
-// Query helpers for the Director
 export function daysSinceBeat(memory, beatId) {
   for (let i = memory.beatHistory.length - 1; i >= 0; i--) {
     if (memory.beatHistory[i].beatId === beatId) {
       return memory.days - memory.beatHistory[i].day;
     }
   }
-  return 99; // never fired
+  return 99;
 }
 
 export function lastBeatSubject(memory, beatId) {
@@ -173,53 +214,96 @@ export function lastBeatSubject(memory, beatId) {
   return null;
 }
 
-export function getRelationshipStrength(memory, idA, idB) {
-  return memory.relationships[pairKey(idA, idB)] || 0;
-}
+// ─── Inspirations ───
+// When contentment >= 80, check for trait-specific inspiration
 
-export function getFriendPairs(memory, minStrength = 3) {
-  const pairs = [];
-  for (const [pk, strength] of Object.entries(memory.relationships)) {
-    if (strength >= minStrength) {
-      const [a, b] = pk.split(':');
-      pairs.push({ a, b, strength });
+export function checkInspirations(memory, residents) {
+  const inspirations = [];
+  for (const r of residents) {
+    const c = getContentment(memory, r.id);
+    if (c >= 80) {
+      const inspiration = {
+        residentId: r.id,
+        trait: r.traitKey,
+        contentment: c,
+      };
+      if (r.traitKey === 'HOST') inspiration.beat = 'OPEN_HOUSE';
+      else if (r.traitKey === 'GARDENER') inspiration.beat = 'HARVEST_FESTIVAL';
+      else if (r.traitKey === 'STORYTELLER') inspiration.beat = 'BLOCK_STORY';
+      else inspiration.beat = 'THE_WAVE';
+      inspirations.push(inspiration);
     }
   }
-  return pairs;
+  return inspirations;
 }
 
-export function getContentment(memory, residentId) {
-  return memory.contentment[residentId] ?? 50;
+// ─── Environmental conditions ───
+
+export const CONDITIONS = {
+  SUNNY: { name: 'Sunny day', modifiers: {} },
+  RAINY: { name: 'Rainy morning', modifiers: { PORCH: 2, FIREPIT: 0 }, visual: 'rain' },
+  HEATWAVE: { name: 'Heatwave', modifiers: { TREE: 2, BENCH: 2, FIREPIT: -1 }, visual: 'heat' },
+  FROST: { name: 'First frost', modifiers: { FIREPIT: 3, GARDEN: -1 }, visual: 'frost' },
+  BLOCK_PARTY: { name: 'Block party', modifiers: { COMMONS: 2 }, visual: 'party' },
+  FESTIVAL: { name: 'Festival week', modifiers: {}, visual: 'festival', bonusPieces: 2 },
+};
+
+export function rollCondition(seedRandom) {
+  const keys = Object.keys(CONDITIONS);
+  const idx = Math.floor(seedRandom() * keys.length);
+  return keys[idx];
 }
 
-export function getLowestContentment(memory, residentIds) {
-  let lowest = null;
-  let lowestVal = 101;
-  for (const id of residentIds) {
-    const val = memory.contentment[id] ?? 50;
-    if (val < lowestVal) {
-      lowestVal = val;
-      lowest = id;
+// ─── Lonely penalty ───
+
+export function applyLonelyPenalty(memory, lonelyIds) {
+  let mem = memory;
+  for (const id of lonelyIds) {
+    mem = addThought(mem, id, 'Lonely day', -15, 2);
+  }
+  return mem;
+}
+
+export function applyIdlePenalty(memory, allIds, activeIds) {
+  let mem = memory;
+  const activeSet = new Set(activeIds);
+  for (const id of allIds) {
+    if (!activeSet.has(id)) {
+      mem = addThought(mem, id, 'Quiet day', -3, 1);
     }
   }
-  return { id: lowest, contentment: lowestVal };
+  return mem;
 }
 
-// Persistence
+// ─── Init ───
+
+export function initResident(memory, residentId) {
+  return {
+    ...memory,
+    thoughts: {
+      ...memory.thoughts,
+      [residentId]: [{ reason: 'Moved in', value: 5, decayDays: 3, day: memory.days }],
+    },
+  };
+}
+
+// ─── Persistence ───
+
 export function saveMemory(memory) {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(memory));
-  } catch {
-    // Private mode
-  }
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(memory)); } catch {}
 }
 
 export function loadMemory() {
   try {
     const data = localStorage.getItem(STORAGE_KEY);
-    if (data) return JSON.parse(data);
-  } catch {
-    // Corrupted or private mode
-  }
+    if (data) {
+      const parsed = JSON.parse(data);
+      // Migrate old format
+      if (parsed.contentment && !parsed.thoughts) {
+        return createMemory(); // Reset if old format
+      }
+      return parsed;
+    }
+  } catch {}
   return createMemory();
 }

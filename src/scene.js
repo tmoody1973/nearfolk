@@ -24,8 +24,10 @@ import { computeScore } from './scoring.js';
 import { createResident, resetResidentPool } from './residents.js';
 import { createSettleController } from './settle.js';
 import {
-  createMemory, initResident, recordDay, loadMemory, saveMemory,
-  getContentment, getFriendPairs,
+  createMemory, initResident, loadMemory, saveMemory,
+  getContentment, getFriendPairs, recordBeat, recordInteraction,
+  decayThoughts, setViewThoughts, applyLonelyPenalty, applyIdlePenalty,
+  checkInspirations, INTERACTION_TYPES,
 } from './memory.js';
 import { createJournalUI, updateJournalUI, showJournal } from './journal.js';
 import {
@@ -473,8 +475,8 @@ export function createScene() {
     if (hoverCell.x < 0) return;
     if (!canPlace(state, state.selectedType, hoverCell.x, hoverCell.z)) return;
 
-    playPlace();
     const type = state.selectedType;
+    playPlace(type);
     const rotation = state.rotation;
     const x = hoverCell.x;
     const z = hoverCell.z;
@@ -482,13 +484,28 @@ export function createScene() {
     state = placePiece(state, type, x, z, rotation);
     const placed = state.pieces[state.pieces.length - 1];
 
-    // Create piece mesh
+    // Create piece mesh with drop animation
     const mesh = PIECE_FACTORIES[type]();
     mesh.rotation.y = (rotation * Math.PI) / 180;
     const size = PIECE_SIZES[type];
-    mesh.position.set(x - halfGrid + size.w / 2, 0, z - halfGrid + size.h / 2);
+    const targetX = x - halfGrid + size.w / 2;
+    const targetZ = z - halfGrid + size.h / 2;
+    mesh.position.set(targetX, 1.5, targetZ); // Start above
     scene.add(mesh);
     meshMap.set(placed.id, mesh);
+
+    // Animate drop (ease-out cubic over 0.3s)
+    const dropStart = performance.now();
+    function animateDrop() {
+      const t = Math.min(1, (performance.now() - dropStart) / 300);
+      const eased = 1 - Math.pow(1 - t, 3); // Cubic ease-out
+      mesh.position.y = 1.5 * (1 - eased);
+      if (t < 1) requestAnimationFrame(animateDrop);
+    }
+    animateDrop();
+
+    // Show floating score delta
+    const prevTotal = parseInt(scoreEl.textContent) || 0;
 
     // Spawn resident if cottage
     if (type === 'COTTAGE') {
@@ -497,7 +514,43 @@ export function createScene() {
 
     updatePreview();
     updateUI();
+
+    // Floating score delta
+    const newTotal = parseInt(scoreEl.textContent) || 0;
+    const delta = newTotal - prevTotal;
+    if (delta !== 0) {
+      showFloatingDelta(delta, targetX, targetZ);
+    }
   });
+
+  // ─── Floating score delta ───
+  function showFloatingDelta(delta, worldX, worldZ) {
+    const el = document.createElement('div');
+    el.className = 'floating-delta';
+    el.textContent = delta > 0 ? `+${delta}` : `${delta}`;
+    el.style.color = delta > 0 ? '#7a9464' : '#c97a5c';
+
+    // Project world position to screen
+    const vec = new Vector3(worldX, 2, worldZ);
+    vec.project(camera);
+    const screenX = (vec.x * 0.5 + 0.5) * window.innerWidth;
+    const screenY = (-vec.y * 0.5 + 0.5) * window.innerHeight;
+    el.style.left = screenX + 'px';
+    el.style.top = screenY + 'px';
+
+    document.getElementById('game-ui').appendChild(el);
+
+    // Animate up and fade
+    let frame = 0;
+    function animDelta() {
+      frame++;
+      el.style.top = (screenY - frame * 0.8) + 'px';
+      el.style.opacity = String(1 - frame / 60);
+      if (frame < 60) requestAnimationFrame(animDelta);
+      else el.remove();
+    }
+    animDelta();
+  }
 
   // Right-click: remove piece under cursor
   window.addEventListener('contextmenu', (e) => {
@@ -922,6 +975,27 @@ export function createScene() {
       .tooltip-name { font-family: 'Lora', serif; font-size: 0.9rem; }
       .tooltip-trait { opacity: 0.7; font-size: 0.7rem; margin-top: 2px; }
       .tooltip-action { opacity: 0.45; font-size: 0.6rem; margin-top: 4px; font-style: italic; }
+      .floating-delta {
+        position: absolute;
+        pointer-events: none;
+        font-family: 'Lora', serif;
+        font-size: 1.2rem;
+        font-weight: 700;
+        text-shadow: 0 1px 3px rgba(0,0,0,0.2);
+        z-index: 15;
+      }
+      .interaction-label {
+        position: absolute;
+        pointer-events: none;
+        font-family: 'Nunito', sans-serif;
+        font-size: 0.65rem;
+        font-weight: 600;
+        color: #6b4e3a;
+        opacity: 0.8;
+        text-shadow: 0 1px 2px rgba(255,255,255,0.5);
+        z-index: 15;
+        white-space: nowrap;
+      }
       @media (min-width: 769px) {
         #mobile-controls { display: none; }
       }
@@ -1289,27 +1363,25 @@ export function createScene() {
         document.getElementById('story-score').textContent = total;
         storyCardEl.classList.remove('hidden');
 
-        // Record day to memory
-        const scoreResult = computeScore(state.grid, state.pieces);
-        const encounters = [];
-        const sightlines = scoreResult.connections.map(c => ({
-          fromId: null, toId: null // simplified for now
-        }));
-        memory = recordDay(
-          memory,
-          encounters,
-          sightlines,
-          scoreResult.lonelyCottages.map(() => null).filter(Boolean),
-          {
-            id: directorResult.beat.id,
-            name: directorResult.beat.name,
-            subjectId: directorResult.subjectId,
-            helperId: directorResult.helperId,
-            caption: directorResult.caption,
-          },
-          total,
-          residents.length
-        );
+        // Record day to memory (interactions already recorded during settle)
+        // Apply lonely penalty
+        const scoreResult2 = computeScore(state.grid, state.pieces);
+        const lonelyIds = scoreResult2.lonelyCottages.map(() => {
+          // Find lonely resident IDs
+          return null; // Simplified, lonely detection from scoring
+        }).filter(Boolean);
+        memory = applyLonelyPenalty(memory, lonelyIds);
+        memory = decayThoughts(memory);
+
+        // Record the beat
+        memory = recordBeat(memory, {
+          id: directorResult.beat.id,
+          name: directorResult.beat.name,
+          subjectId: directorResult.subjectId,
+          helperId: directorResult.helperId,
+          caption: directorResult.caption,
+        }, total, residents.length);
+
         saveMemory(memory);
         updateJournalUI(memory.journal);
         currentDay = memory.days + 1;
@@ -1561,19 +1633,66 @@ export function createScene() {
         }
       }
 
-      // Encounter particles: spawn hearts when two residents are close
+      // Named interactions + heart particles
+      if (result.interactions && result.interactions.length > 0) {
+        for (const interaction of result.interactions) {
+          // Record to memory
+          memory = recordInteraction(
+            memory, interaction.residentA, interaction.residentB,
+            interaction.type, memory.days + 1
+          );
+
+          // Heart particle burst (5-8 particles)
+          const burstCount = 5 + Math.floor(Math.random() * 4);
+          for (let k = 0; k < burstCount; k++) {
+            const heart = new Mesh(
+              new SphereGeometry(0.06 + Math.random() * 0.04, 4, 4),
+              new MeshBasicMaterial({ color: 0xf4a65c, transparent: true, opacity: 0.8 })
+            );
+            const startY = 1.0 + Math.random() * 0.5;
+            const spread = 0.3;
+            heart.position.set(
+              interaction.position.x + (Math.random() - 0.5) * spread,
+              startY,
+              interaction.position.z + (Math.random() - 0.5) * spread
+            );
+            scene.add(heart);
+            heartParticles.push({ mesh: heart, startY, birthTime: elapsed });
+          }
+
+          // Floating interaction label
+          const iType = INTERACTION_TYPES[interaction.type] || { name: interaction.type, emoji: '💛' };
+          const label = document.createElement('div');
+          label.className = 'interaction-label';
+          label.textContent = `${iType.emoji} ${interaction.nameA} + ${interaction.nameB}: ${iType.name}`;
+          const vec = new Vector3(interaction.position.x, 1.5, interaction.position.z);
+          vec.project(camera);
+          label.style.left = ((vec.x * 0.5 + 0.5) * window.innerWidth) + 'px';
+          label.style.top = ((-vec.y * 0.5 + 0.5) * window.innerHeight) + 'px';
+          document.getElementById('game-ui').appendChild(label);
+
+          // Fade label after 2.5s
+          setTimeout(() => {
+            label.style.transition = 'opacity 0.5s';
+            label.style.opacity = '0';
+            setTimeout(() => label.remove(), 500);
+          }, 2500);
+        }
+      }
+
+      // Ambient heart particles (occasional, between nearby residents)
       const positions = result.positions;
       for (let i = 0; i < positions.length; i++) {
         for (let j = i + 1; j < positions.length; j++) {
           const a = positions[i].position;
           const b = positions[j].position;
           const dist = Math.abs(a.x - b.x) + Math.abs(a.z - b.z);
-          if (dist < 1.5 && Math.random() < 0.02) {
+          if (dist < 1.5 && Math.random() < 0.01) {
             const heart = new Mesh(
-              new SphereGeometry(0.08, 4, 4),
-              new MeshBasicMaterial({ color: 0xf4a65c, transparent: true, opacity: 0.8 })
+              new SphereGeometry(0.06, 4, 4),
+              new MeshBasicMaterial({ color: 0xf4a65c, transparent: true, opacity: 0.6 })
             );
-            const startY = 1.0 + Math.random() * 0.5;
+            const startY = 1.0 + Math.random() * 0.3;
             heart.position.set((a.x + b.x) / 2, startY, (a.z + b.z) / 2);
             scene.add(heart);
             heartParticles.push({ mesh: heart, startY, birthTime: elapsed });

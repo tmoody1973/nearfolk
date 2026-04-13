@@ -298,3 +298,43 @@ export function computeScore(grid, pieces) {
     lonelyCottages: lonelyCottages.map(c => porchCenter(c)),
   };
 }
+
+// ─── View quality per cottage ───
+// Raycasts from porch and identifies what's visible
+export function computeViewQuality(grid, pieces, cottage) {
+  const dir = FACING[cottage.rotation];
+  const center = porchCenter(cottage);
+  const views = [];
+
+  for (let dist = 1; dist <= 5; dist++) {
+    const cx = Math.floor(center.cx + dir.dx * (dist + 0.5));
+    const cz = Math.floor(center.cz + dir.dz * (dist + 0.5));
+
+    if (cx < 0 || cx >= GRID_SIZE || cz < 0 || cz >= GRID_SIZE) {
+      views.push('EDGE');
+      break;
+    }
+
+    const cellId = grid[cx][cz];
+    if (cellId === 'COMMONS') { views.push('COMMONS'); break; }
+    if (cellId === null) continue; // Empty, keep looking
+
+    const target = pieces.find(p => p.id === cellId);
+    if (!target) continue;
+
+    if (target.type === 'TREE') { views.push('TREE'); break; }
+    if (target.type === 'GARDEN') { views.push('GARDEN'); break; }
+    if (target.type === 'FIREPIT') { views.push('FIREPIT'); break; }
+    if (target.type === 'COTTAGE') {
+      const targetDir = FACING[target.rotation];
+      const dot = dir.dx * targetDir.dx + dir.dz * targetDir.dz;
+      if (dot < 0) { views.push('PORCH'); } // Facing each other
+      else if (dot > 0) { views.push('BLANK_WALL'); } // Same direction = back
+      break;
+    }
+    // Bench, mailbox, path = keep looking
+  }
+
+  if (views.length === 0) views.push('NOTHING');
+  return views;
+}

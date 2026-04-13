@@ -70,26 +70,81 @@ function startAmbient() {
 
   // Fade in over 2 seconds
   ambientGain.gain.linearRampToValueAtTime(0.08, ctx.currentTime + 2);
+
+  // Bird chirps every 8-15 seconds
+  function scheduleBird() {
+    if (!ctx || isMuted) return;
+    const delay = 8 + Math.random() * 7;
+    setTimeout(() => {
+      if (!ctx || isMuted) { scheduleBird(); return; }
+      const bird = ctx.createOscillator();
+      const bGain = ctx.createGain();
+      bird.type = 'sine';
+      bird.frequency.value = 2000 + Math.random() * 1000;
+      bird.frequency.linearRampToValueAtTime(1500 + Math.random() * 800, ctx.currentTime + 0.15);
+      bGain.gain.value = 0.03;
+      bGain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.2);
+      bird.connect(bGain);
+      bGain.connect(masterGain);
+      bird.start();
+      bird.stop(ctx.currentTime + 0.2);
+      scheduleBird();
+    }, delay * 1000);
+  }
+  scheduleBird();
+
+  // Wind chime every 20-30 seconds
+  function scheduleChime() {
+    if (!ctx) return;
+    const delay = 20 + Math.random() * 10;
+    setTimeout(() => {
+      if (!ctx || isMuted) { scheduleChime(); return; }
+      const chime = ctx.createOscillator();
+      const cGain = ctx.createGain();
+      chime.type = 'sine';
+      chime.frequency.value = 1200 + Math.random() * 400;
+      cGain.gain.value = 0.02;
+      cGain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 1.0);
+      chime.connect(cGain);
+      cGain.connect(masterGain);
+      chime.start();
+      chime.stop(ctx.currentTime + 1.0);
+      scheduleChime();
+    }, delay * 1000);
+  }
+  scheduleChime();
 }
 
-// ─── Placement SFX (wooden clunk) ───
-export function playPlace() {
+// ─── Placement SFX (varies by piece type) ───
+export function playPlace(pieceType = 'COTTAGE') {
   if (!ctx || isMuted) return;
   ensureRunning();
 
   const osc = ctx.createOscillator();
   const gain = ctx.createGain();
 
-  osc.type = 'triangle';
-  osc.frequency.value = 200 + Math.random() * 60;
+  // Different sound per piece type
+  const sounds = {
+    COTTAGE: { type: 'triangle', freq: 180, dur: 0.2, vol: 0.15 },
+    TREE: { type: 'sawtooth', freq: 400, dur: 0.1, vol: 0.06 }, // leaf rustle
+    PATH: { type: 'square', freq: 300, dur: 0.08, vol: 0.08 }, // stone clink
+    GARDEN: { type: 'sine', freq: 250, dur: 0.15, vol: 0.1 }, // soft dirt
+    FIREPIT: { type: 'triangle', freq: 150, dur: 0.2, vol: 0.12 }, // deeper
+    BENCH: { type: 'triangle', freq: 220, dur: 0.12, vol: 0.1 },
+    MAILBOX: { type: 'square', freq: 350, dur: 0.08, vol: 0.08 }, // metallic
+    PORCH: { type: 'triangle', freq: 200, dur: 0.15, vol: 0.12 },
+  };
 
-  gain.gain.value = 0.15;
-  gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.15);
+  const s = sounds[pieceType] || sounds.COTTAGE;
+  osc.type = s.type;
+  osc.frequency.value = s.freq + Math.random() * 40;
+  gain.gain.value = s.vol;
+  gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + s.dur);
 
   osc.connect(gain);
   gain.connect(masterGain);
   osc.start();
-  osc.stop(ctx.currentTime + 0.15);
+  osc.stop(ctx.currentTime + s.dur);
 }
 
 // ─── Remove SFX (softer reverse clunk) ───

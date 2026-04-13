@@ -13,7 +13,10 @@
 import { runDirector } from './director.js';
 import { GRID_SIZE, PIECE_SIZES } from './state.js';
 
-const SETTLE_DURATION = 25;
+// Duration scales with cottage count: min 10s, max 25s
+function getSettleDuration(cottageCount) {
+  return Math.max(10, Math.min(25, cottageCount * 5));
+}
 const halfGrid = GRID_SIZE / 2;
 
 const PHASES = [
@@ -298,41 +301,97 @@ function interpolatePosition(waypoints, t) {
   return { x: last.x, z: last.z };
 }
 
+// ─── Determine interaction type based on nearby pieces ───
+function getInteractionType(pieces, x, z) {
+  for (const p of pieces) {
+    const px = p.x - GRID_SIZE / 2 + PIECE_SIZES[p.type].w / 2;
+    const pz = p.z - GRID_SIZE / 2 + PIECE_SIZES[p.type].h / 2;
+    const dist = Math.abs(px - x) + Math.abs(pz - z);
+    if (dist < 1.5) {
+      if (p.type === 'GARDEN') return 'GARDEN_CHAT';
+      if (p.type === 'FIREPIT') return 'FIRE_PIT_STORY';
+      if (p.type === 'MAILBOX') return 'MORNING_WAVE';
+      if (p.type === 'BENCH') return 'BENCH_CHAT';
+    }
+  }
+  // Check if near a cottage (porch coffee)
+  for (const p of pieces) {
+    if (p.type !== 'COTTAGE') continue;
+    const px = p.x - GRID_SIZE / 2 + PIECE_SIZES.COTTAGE.w / 2;
+    const pz = p.z - GRID_SIZE / 2 + PIECE_SIZES.COTTAGE.h / 2;
+    if (Math.abs(px - x) + Math.abs(pz - z) < 2) return 'PORCH_COFFEE';
+  }
+  return 'PASSING_HELLO';
+}
+
 // ─── Settle controller ───
 export function createSettleController(pieces, residents, grid, onComplete, memory = null) {
   const directorResult = runDirector(pieces, residents, memory);
   const timeline = buildTimeline(residents, pieces, grid, directorResult);
+  const cottageCount = pieces.filter(p => p.type === 'COTTAGE').length;
+  const duration = getSettleDuration(cottageCount);
 
   let startTime = null;
   let isRunning = false;
   let progress = 0;
+  const detectedInteractions = new Set(); // Track unique pairs to avoid duplicates
 
   function start(currentTime) {
     startTime = currentTime;
     isRunning = true;
     progress = 0;
+    detectedInteractions.clear();
   }
 
   function update(currentTime) {
     if (!isRunning || startTime === null) {
-      return { progress: 0, positions: [], isRunning: false, directorResult };
+      return { progress: 0, positions: [], isRunning: false, directorResult, interactions: [] };
     }
 
     const elapsed = (currentTime - startTime) / 1000;
-    progress = Math.min(1, elapsed / SETTLE_DURATION);
+    progress = Math.min(1, elapsed / duration);
 
     const positions = timeline.map(entry => ({
       residentId: entry.resident.id,
+      residentName: entry.resident.name,
       position: interpolatePosition(entry.waypoints, progress),
     }));
+
+    // Detect named interactions when two residents are close
+    const newInteractions = [];
+    for (let i = 0; i < positions.length; i++) {
+      for (let j = i + 1; j < positions.length; j++) {
+        const a = positions[i];
+        const b = positions[j];
+        const dist = Math.abs(a.position.x - b.position.x) + Math.abs(a.position.z - b.position.z);
+        if (dist < 1.5) {
+          const pairId = [a.residentId, b.residentId].sort().join(':');
+          if (!detectedInteractions.has(pairId)) {
+            detectedInteractions.add(pairId);
+            const type = getInteractionType(pieces, (a.position.x + b.position.x) / 2, (a.position.z + b.position.z) / 2);
+            newInteractions.push({
+              residentA: a.residentId,
+              residentB: b.residentId,
+              nameA: a.residentName,
+              nameB: b.residentName,
+              type,
+              position: {
+                x: (a.position.x + b.position.x) / 2,
+                z: (a.position.z + b.position.z) / 2,
+              },
+            });
+          }
+        }
+      }
+    }
 
     if (progress >= 1) {
       isRunning = false;
       if (onComplete) onComplete(directorResult);
     }
 
-    return { progress, positions, isRunning, directorResult };
+    return { progress, positions, isRunning, directorResult, interactions: newInteractions };
   }
 
-  return { start, update, directorResult, get isRunning() { return isRunning; } };
+  return { start, update, directorResult, get isRunning() { return isRunning; }, get duration() { return duration; } };
 }

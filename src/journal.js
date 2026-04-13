@@ -59,6 +59,11 @@ export function createJournalUI() {
         font-style: italic;
         line-height: 1.5;
       }
+      .journal-encounters {
+        font-size: 0.7rem;
+        opacity: 0.5;
+        margin-top: 4px;
+      }
       .journal-score {
         font-family: 'Nunito', sans-serif;
         font-size: 0.7rem;
@@ -118,6 +123,9 @@ export function updateJournalUI(journal) {
     <div class="journal-entry">
       <div class="journal-day">Day ${entry.day} · ${entry.beatName}</div>
       <div class="journal-caption">${entry.caption}</div>
+      ${entry.encounters && entry.encounters.length > 0
+        ? `<div class="journal-encounters">${entry.encounterCount} encounters: ${entry.encounters.join(' ')}</div>`
+        : ''}
       <div class="journal-score">Score: ${entry.score}</div>
     </div>
   `).join('');
