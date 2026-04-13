@@ -33,8 +33,9 @@ import {
   toggleMute, getIsMuted,
 } from './audio.js';
 import { captureShareCard, generatePostcard, sharePostcard } from './share.js';
-import { todayUTC, generateSeed, generatePracticeSeed, hasSubmittedToday } from './seed.js';
+import { todayUTC, generateSeed, generatePracticeSeed, hasSubmittedToday, markScoreSubmitted } from './seed.js';
 import { createTimer } from './timer.js';
+import { submitScore, fetchLeaderboard } from './leaderboard.js';
 
 export function createScene() {
   // ─── Seed + State ───
@@ -682,6 +683,24 @@ export function createScene() {
       .palette-item:hover { background: rgba(139, 107, 74, 0.1); }
       .palette-item.selected { background: rgba(139, 107, 74, 0.2); }
       .palette-item.exhausted { opacity: 0.3; pointer-events: none; }
+      #piece-palette.morphed {
+        transition: all 0.6s ease;
+        padding: 0;
+      }
+      .palette-morph-settle {
+        padding: 20px 16px;
+        text-align: center;
+        font-family: 'Lora', serif;
+        font-size: 1.2rem;
+        font-weight: 700;
+        color: #f5efe6;
+        background: rgba(201, 122, 92, 0.9);
+        border-radius: 12px;
+        cursor: pointer;
+        animation: settlePulse 2s ease-in-out infinite;
+        user-select: none;
+      }
+      .palette-morph-settle:hover { background: rgba(201, 122, 92, 1); }
       .palette-count {
         margin-left: auto;
         font-size: 0.75rem;
@@ -947,28 +966,56 @@ export function createScene() {
   }
 
   function updateUI() {
-    paletteEl.innerHTML = '';
-    const types = Object.keys(PIECE_LABELS);
-    types.forEach((type, i) => {
-      const info = PIECE_LABELS[type];
-      const count = state.budget[type];
-      const item = document.createElement('div');
-      item.className = 'palette-item';
-      if (type === state.selectedType) item.classList.add('selected');
-      if (count <= 0) item.classList.add('exhausted');
-      item.innerHTML = `
-        <div class="palette-icon" style="background:${info.color}"></div>
-        <span>${info.label}</span>
-        <span class="palette-count">${count}</span>
-      `;
-      item.addEventListener('click', () => {
-        if (count <= 0) return;
-        state = { ...state, selectedType: type };
-        updatePreview();
-        updateUI();
+    const budgetEmpty = totalBudget(state) === 0;
+    const hasCottages = state.pieces.some(p => p.type === 'COTTAGE');
+    const settleBtn = document.getElementById('settle-btn');
+
+    if (budgetEmpty && hasCottages && !isSettling) {
+      // ─── MORPH: palette becomes Settle button ───
+      paletteEl.innerHTML = '';
+      paletteEl.classList.add('morphed');
+      const morphBtn = document.createElement('div');
+      morphBtn.className = 'palette-morph-settle';
+      morphBtn.textContent = 'Settle';
+      morphBtn.addEventListener('click', () => {
+        settleBtn.click();
       });
-      paletteEl.appendChild(item);
-    });
+      paletteEl.appendChild(morphBtn);
+      settleBtn.classList.remove('visible');
+    } else {
+      // ─── Normal palette ───
+      paletteEl.classList.remove('morphed');
+      paletteEl.innerHTML = '';
+      const types = Object.keys(PIECE_LABELS);
+      types.forEach((type, i) => {
+        const info = PIECE_LABELS[type];
+        const count = state.budget[type];
+        const item = document.createElement('div');
+        item.className = 'palette-item';
+        if (type === state.selectedType) item.classList.add('selected');
+        if (count <= 0) item.classList.add('exhausted');
+        item.innerHTML = `
+          <div class="palette-icon" style="background:${info.color}"></div>
+          <span>${info.label}</span>
+          <span class="palette-count">${count}</span>
+        `;
+        item.addEventListener('click', () => {
+          if (count <= 0) return;
+          state = { ...state, selectedType: type };
+          updatePreview();
+          updateUI();
+        });
+        paletteEl.appendChild(item);
+      });
+
+      // Show settle button when cottages exist but budget isn't empty
+      if (hasCottages && !isSettling) {
+        settleBtn.classList.add('visible');
+        settleBtn.classList.remove('pulse');
+      } else {
+        settleBtn.classList.remove('visible');
+      }
+    }
 
     // Live score + visual connections
     const scoreResult = computeScore(state.grid, state.pieces);
@@ -990,22 +1037,6 @@ export function createScene() {
 
     // Draw sightline connections
     updateVisualConnections(connections, lonelyCottages);
-
-    // Show settle button when there are cottages placed and not currently settling
-    const settleBtn = document.getElementById('settle-btn');
-    const hasCottages = state.pieces.some(p => p.type === 'COTTAGE');
-    if (hasCottages && !isSettling) {
-      settleBtn.classList.add('visible');
-      // Pulse when budget is exhausted
-      if (totalBudget(state) === 0) {
-        settleBtn.classList.add('pulse');
-      } else {
-        settleBtn.classList.remove('pulse');
-      }
-    } else {
-      settleBtn.classList.remove('visible');
-      settleBtn.classList.remove('pulse');
-    }
   }
 
   updateUI();
@@ -1148,6 +1179,26 @@ export function createScene() {
           score: total,
           date: todayUTC(),
         };
+
+        // Submit to leaderboard if ranked mode
+        if (gameMode === 'ranked' && !hasSubmittedToday()) {
+          const storyRankEl = document.createElement('div');
+          storyRankEl.id = 'story-rank';
+          storyRankEl.style.cssText = 'font-size:0.8rem;opacity:0.6;margin-bottom:8px;';
+          storyRankEl.textContent = 'Submitting score...';
+          document.getElementById('story-score').after(storyRankEl);
+
+          submitScore(todayUTC(), total, directorResult.beat.id).then(result => {
+            if (result.success) {
+              markScoreSubmitted(todayUTC(), total);
+              storyRankEl.textContent = `Rank #${result.rank} of ${result.total} today`;
+            } else {
+              storyRankEl.textContent = result.error === 'Already submitted today'
+                ? 'Already scored today'
+                : 'Score saved locally';
+            }
+          });
+        }
 
         updateUI();
       }
