@@ -785,7 +785,7 @@ export function createScene() {
       #timer-display.warning { color: #c97a5c; }
       #mode-toggle {
         position: absolute;
-        top: 50px; right: 20px;
+        top: 12px; left: 162px;
         pointer-events: auto;
       }
       #settle-btn {
@@ -1129,7 +1129,7 @@ export function createScene() {
   const helpBtn = document.createElement('button');
   helpBtn.textContent = '?';
   helpBtn.className = 'mobile-btn';
-  helpBtn.style.cssText = 'position:absolute;top:16px;right:80px;pointer-events:auto;width:32px;height:32px;font-size:0.9rem;border-radius:50%;';
+  helpBtn.style.cssText = 'position:absolute;top:12px;left:80px;pointer-events:auto;width:32px;height:32px;font-size:0.9rem;';
   document.getElementById('game-ui').appendChild(helpBtn);
   // ─── Mode toggle (ranked/practice) ───
   const modeBtnEl = document.getElementById('mode-btn');
@@ -1150,7 +1150,7 @@ export function createScene() {
   const muteBtn = document.createElement('button');
   muteBtn.textContent = '♪';
   muteBtn.className = 'mobile-btn';
-  muteBtn.style.cssText = 'position:absolute;top:16px;right:120px;pointer-events:auto;width:32px;height:32px;font-size:0.9rem;border-radius:50%;';
+  muteBtn.style.cssText = 'position:absolute;top:12px;left:120px;pointer-events:auto;width:32px;height:32px;font-size:0.9rem;';
   document.getElementById('game-ui').appendChild(muteBtn);
   muteBtn.addEventListener('click', (e) => {
     e.stopPropagation();
