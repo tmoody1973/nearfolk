@@ -123,8 +123,8 @@ function interpolatePosition(waypoints, t) {
 
 // ─── Settle controller ───
 // Returns an object that manages the animation state.
-export function createSettleController(pieces, residents, grid, onComplete) {
-  const directorResult = runDirector(pieces, residents);
+export function createSettleController(pieces, residents, grid, onComplete, memory = null) {
+  const directorResult = runDirector(pieces, residents, memory);
   const timeline = buildTimeline(residents, pieces, grid);
 
   let startTime = null;

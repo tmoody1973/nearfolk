@@ -24,6 +24,11 @@ import { computeScore } from './scoring.js';
 import { createResident, resetResidentPool } from './residents.js';
 import { createSettleController } from './settle.js';
 import {
+  createMemory, initResident, recordDay, loadMemory, saveMemory,
+  getContentment, getFriendPairs,
+} from './memory.js';
+import { createJournalUI, updateJournalUI, showJournal } from './journal.js';
+import {
   shouldShowTutorial, getTutorialPieces, isTutorialSolved,
   createTutorialUI, showTutorialSuccess, removeTutorialUI, markTutorialSeen,
 } from './tutorial.js';
@@ -55,6 +60,11 @@ export function createScene() {
   let settleController = null;
   let isSettling = false;
   const heartParticles = [];
+
+  // Memory + multi-round day system
+  let memory = loadMemory();
+  let currentDay = memory.days + 1;
+  const MAX_DAYS = 5;
 
   // Timer
   const gameTimer = createTimer(() => {
@@ -427,6 +437,7 @@ export function createScene() {
   function spawnResident(cottageId, cottageX, cottageZ, rotation = 0) {
     const resident = createResident(cottageId, residents);
     residents = [...residents, resident];
+    memory = initResident(memory, resident.id);
 
     const mesh = createResidentMesh(resident);
     const size = PIECE_SIZES.COTTAGE;
@@ -917,6 +928,7 @@ export function createScene() {
     </style>
     <div id="game-name"><img src="/logo.png" alt="Nearfolk" id="game-logo"></div>
     <div id="score-display">
+      <div id="day-display" style="font-size:0.65rem;opacity:0.5;margin-bottom:2px;">Day 1 of 5</div>
       <div id="score-label">Neighborliness</div>
       <div id="score-value">0</div>
       <div id="timer-display"></div>
@@ -1017,6 +1029,42 @@ export function createScene() {
       scene.add(cloud);
       lonelyMarkers.push(cloud);
     }
+
+    // Draw friend pair lines (dusty rose, thinner than sightlines)
+    const friends = getFriendPairs(memory);
+    for (const { a, b, strength } of friends) {
+      const rA = residents.find(r => r.id === a);
+      const rB = residents.find(r => r.id === b);
+      if (!rA || !rB) continue;
+      const pA = state.pieces.find(p => p.id === rA.cottageId);
+      const pB = state.pieces.find(p => p.id === rB.cottageId);
+      if (!pA || !pB) continue;
+
+      const sA = PIECE_SIZES.COTTAGE;
+      const sB = PIECE_SIZES.COTTAGE;
+      const ax = pA.x - halfGrid + sA.w / 2;
+      const az = pA.z - halfGrid + sA.h / 2;
+      const bx = pB.x - halfGrid + sB.w / 2;
+      const bz = pB.z - halfGrid + sB.h / 2;
+
+      const dx = bx - ax;
+      const dz = bz - az;
+      const len = Math.sqrt(dx * dx + dz * dz);
+      const angle = Math.atan2(dx, dz);
+      const opacity = Math.min(0.5, strength * 0.1);
+
+      const lineGeo = new BoxGeometry(0.04, 0.04, len);
+      const lineMat = new MeshBasicMaterial({
+        color: 0xd4a294, // dusty rose
+        transparent: true,
+        opacity,
+      });
+      const lineMesh = new Mesh(lineGeo, lineMat);
+      lineMesh.position.set((ax + bx) / 2, 0.8, (az + bz) / 2);
+      lineMesh.rotation.y = angle;
+      scene.add(lineMesh);
+      connectionLines.push(lineMesh);
+    }
   }
 
   function updateUI() {
@@ -1086,6 +1134,10 @@ export function createScene() {
       }, 150);
     }
     scoreEl.textContent = total;
+
+    // Day counter
+    const dayEl = document.getElementById('day-display');
+    if (dayEl) dayEl.textContent = `Day ${currentDay} of ${MAX_DAYS}`;
     scoreEl.title = [
       `Eyes: ${breakdown.eyeContactEdges || 0}×3`,
       `Nesting: ${breakdown.nestingBonuses || 0}×2`,
@@ -1237,6 +1289,35 @@ export function createScene() {
         document.getElementById('story-score').textContent = total;
         storyCardEl.classList.remove('hidden');
 
+        // Record day to memory
+        const scoreResult = computeScore(state.grid, state.pieces);
+        const encounters = [];
+        const sightlines = scoreResult.connections.map(c => ({
+          fromId: null, toId: null // simplified for now
+        }));
+        memory = recordDay(
+          memory,
+          encounters,
+          sightlines,
+          scoreResult.lonelyCottages.map(() => null).filter(Boolean),
+          {
+            id: directorResult.beat.id,
+            name: directorResult.beat.name,
+            subjectId: directorResult.subjectId,
+            helperId: directorResult.helperId,
+            caption: directorResult.caption,
+          },
+          total,
+          residents.length
+        );
+        saveMemory(memory);
+        updateJournalUI(memory.journal);
+        currentDay = memory.days + 1;
+
+        // Show day number on story card
+        document.getElementById('story-beat-name').textContent =
+          `Day ${memory.days} · ${directorResult.beat.name}`;
+
         // Store for share card
         lastStoryData = {
           beatName: directorResult.beat.name,
@@ -1266,7 +1347,8 @@ export function createScene() {
         }
 
         updateUI();
-      }
+      },
+      memory
     );
 
     startSettleUnderscore();
@@ -1297,6 +1379,21 @@ export function createScene() {
 
   document.getElementById('story-close').addEventListener('click', () => {
     storyCardEl.classList.add('hidden');
+  });
+
+  // ─── Journal ───
+  createJournalUI();
+  updateJournalUI(memory.journal);
+
+  const journalBtn = document.createElement('button');
+  journalBtn.textContent = '📖';
+  journalBtn.className = 'mobile-btn';
+  journalBtn.style.cssText = 'pointer-events:auto;width:32px;height:32px;font-size:0.9rem;';
+  document.getElementById('top-toolbar').appendChild(journalBtn);
+  journalBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    updateJournalUI(memory.journal);
+    showJournal();
   });
 
   // ─── Mobile buttons ───
@@ -1478,9 +1575,16 @@ export function createScene() {
       key.intensity = 0.7 + sunProgress * 0.5;
       ambient.intensity = 0.3 + sunProgress * 0.2;
     } else {
-      // Resident idle bob (all spawned residents breathe gently)
+      // Resident idle bob with contentment-based body language
       for (const [id, mesh] of residentMeshMap) {
-        mesh.position.y = Math.sin(elapsed * 2 + mesh.position.x * 3) * 0.03;
+        const resident = residents.find(r => r.id === id);
+        const contentment = resident ? getContentment(memory, resident.id) : 50;
+        const bobSpeed = contentment > 70 ? 3 : contentment > 30 ? 2 : 1;
+        const bobHeight = contentment > 70 ? 0.05 : contentment > 30 ? 0.03 : 0.015;
+        // Hunched when low contentment
+        const scaleY = contentment > 30 ? 1 : 0.85;
+        mesh.scale.y = scaleY;
+        mesh.position.y = Math.sin(elapsed * bobSpeed + mesh.position.x * 3) * bobHeight;
       }
     }
 

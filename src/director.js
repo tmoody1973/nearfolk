@@ -286,10 +286,35 @@ const BEATS = [
 ];
 
 // ─── Director entry point ───
-// Pure function. Takes a snapshot of neighborhood state, returns the beat + caption.
-export function runDirector(pieces, residents) {
-  // Build state summary for beat evaluation
+// Pure function. Takes neighborhood state + memory, returns beat + caption + choreography.
+import {
+  daysSinceBeat as memDaysSince,
+  getLowestContentment, getContentment,
+  lastBeatSubject, getFriendPairs,
+} from './memory.js';
+
+export function runDirector(pieces, residents, memory = null) {
   const cottages = pieces.filter(p => p.type === 'COTTAGE');
+
+  // Build daysSinceBeat lookup from memory
+  const daysSinceBeatMap = {};
+  if (memory) {
+    for (const beat of BEATS) {
+      daysSinceBeatMap[beat.id] = memDaysSince(memory, beat.id);
+    }
+  }
+
+  // Find lowest-contentment resident for arc-aware beats
+  const lowestContentment = memory
+    ? getLowestContentment(memory, residents.map(r => r.id))
+    : { id: null, contentment: 50 };
+
+  // Arc detection: last Check-In subject becomes eligible helper
+  const lastCheckInSubject = memory ? lastBeatSubject(memory, 'CHECK_IN') : null;
+
+  // Friend pairs for relationship beats
+  const friendPairs = memory ? getFriendPairs(memory) : [];
+
   const state = {
     cottages,
     residents,
@@ -299,7 +324,11 @@ export function runDirector(pieces, residents) {
     mailboxCount: pieces.filter(p => p.type === 'MAILBOX').length,
     benchCount: pieces.filter(p => p.type === 'BENCH').length,
     treeCount: pieces.filter(p => p.type === 'TREE').length,
-    daysSinceBeat: {}, // No memory yet (added in Tier 2)
+    daysSinceBeat: daysSinceBeatMap,
+    lowestContentment,
+    lastCheckInSubject,
+    friendPairs,
+    memory,
   };
 
   // Filter by hard gate
@@ -309,6 +338,8 @@ export function runDirector(pieces, residents) {
     return {
       beat: quiet,
       caption: quiet.generateCaption(state),
+      subjectId: null,
+      helperId: null,
     };
   }
 
@@ -321,8 +352,45 @@ export function runDirector(pieces, residents) {
 
   const primary = scored[0].beat;
 
+  // Determine subject and helper for choreography
+  let subjectId = null;
+  let helperId = null;
+
+  if (primary.id === 'CHECK_IN') {
+    const lonely = residents.find(r =>
+      memory ? getContentment(memory, r.id) < 30 : r.encounterCount === 0
+    );
+    const helper = residents.find(r =>
+      r.id !== lonely?.id &&
+      ['HOST', 'STORYTELLER', 'GARDENER'].includes(r.traitKey)
+    );
+    // Arc: last subject becomes helper if available
+    if (lastCheckInSubject) {
+      const arcHelper = residents.find(r => r.id === lastCheckInSubject);
+      if (arcHelper && arcHelper.id !== lonely?.id) {
+        helperId = arcHelper.id;
+      }
+    }
+    subjectId = lonely?.id || null;
+    helperId = helperId || helper?.id || null;
+  } else if (primary.id === 'GARDEN_CLUB') {
+    const gardeners = residents.filter(r =>
+      ['GARDENER', 'GREEN_THUMB'].includes(r.traitKey)
+    );
+    subjectId = gardeners[0]?.id || null;
+    helperId = gardeners[1]?.id || null;
+  } else if (primary.id === 'STORYTELLERS_PORCH') {
+    const teller = residents.find(r => r.traitKey === 'STORYTELLER');
+    subjectId = teller?.id || null;
+  } else if (primary.id === 'NEW_NEIGHBOR') {
+    const newbie = residents.find(r => r.traitKey === 'NEW_IN_TOWN');
+    subjectId = newbie?.id || null;
+  }
+
   return {
     beat: primary,
     caption: primary.generateCaption(state),
+    subjectId,
+    helperId,
   };
 }
