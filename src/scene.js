@@ -33,11 +33,15 @@ import {
   toggleMute, getIsMuted,
 } from './audio.js';
 import { captureShareCard, generatePostcard, sharePostcard } from './share.js';
-import { todayUTC } from './seed.js';
+import { todayUTC, generateSeed, generatePracticeSeed, hasSubmittedToday } from './seed.js';
+import { createTimer } from './timer.js';
 
 export function createScene() {
-  // ─── State ───
+  // ─── Seed + State ───
+  let currentSeed = generateSeed(todayUTC());
   let state = createInitialState();
+  // Apply seed budget
+  state = { ...state, budget: { ...currentSeed.budget } };
 
   // Map piece IDs to Three.js groups for removal
   const meshMap = new Map();
@@ -49,6 +53,14 @@ export function createScene() {
   // Settle state
   let settleController = null;
   let isSettling = false;
+
+  // Timer
+  const gameTimer = createTimer(() => {
+    // Auto-settle on timer expiry
+    if (!isSettling && state.pieces.some(p => p.type === 'COTTAGE')) {
+      document.getElementById('settle-btn').click();
+    }
+  });
 
   // Tutorial state
   let inTutorial = shouldShowTutorial();
@@ -143,11 +155,11 @@ export function createScene() {
     scene.add(new Line(vGeo, gridLineMat));
   }
 
-  // ─── Commons (pre-placed shared space, 3x3 at center) ───
-  const COMMONS_X = 3;
-  const COMMONS_Z = 3;
-  const COMMONS_W = 3;
-  const COMMONS_H = 3;
+  // ─── Commons (pre-placed shared space, position from seed) ───
+  const COMMONS_X = currentSeed.commonsX;
+  const COMMONS_Z = currentSeed.commonsZ;
+  const COMMONS_W = currentSeed.commonsW;
+  const COMMONS_H = currentSeed.commonsH;
 
   // Mark commons cells as occupied in state
   for (let dx = 0; dx < COMMONS_W; dx++) {
@@ -713,6 +725,19 @@ export function createScene() {
         -webkit-tap-highlight-color: transparent;
       }
       .mobile-btn:active { background: rgba(139, 107, 74, 0.3); }
+      #timer-display {
+        font-family: 'Nunito', sans-serif;
+        font-size: 1rem;
+        font-weight: 700;
+        opacity: 0.7;
+        margin-top: 4px;
+      }
+      #timer-display.warning { color: #c97a5c; }
+      #mode-toggle {
+        position: absolute;
+        top: 50px; right: 20px;
+        pointer-events: auto;
+      }
       #settle-btn {
         position: absolute;
         bottom: 80px;
@@ -831,6 +856,10 @@ export function createScene() {
     <div id="score-display">
       <div id="score-label">Neighborliness</div>
       <div id="score-value">0</div>
+      <div id="timer-display"></div>
+    </div>
+    <div id="mode-toggle">
+      <button id="mode-btn" class="mobile-btn" style="width:auto;padding:4px 12px;font-size:0.7rem;border-radius:6px;pointer-events:auto;">Practice</button>
     </div>
     <div id="piece-palette"></div>
     <div id="mobile-controls">
@@ -1019,6 +1048,21 @@ export function createScene() {
   helpBtn.className = 'mobile-btn';
   helpBtn.style.cssText = 'position:absolute;top:16px;right:80px;pointer-events:auto;width:32px;height:32px;font-size:0.9rem;border-radius:50%;';
   document.getElementById('game-ui').appendChild(helpBtn);
+  // ─── Mode toggle (ranked/practice) ───
+  const modeBtnEl = document.getElementById('mode-btn');
+  const timerDisplayEl = document.getElementById('timer-display');
+  let gameMode = 'practice';
+
+  modeBtnEl.addEventListener('click', (e) => {
+    e.stopPropagation();
+    gameMode = gameMode === 'practice' ? 'ranked' : 'practice';
+    modeBtnEl.textContent = gameMode === 'practice' ? 'Practice' : 'Ranked (60s)';
+    gameTimer.start(gameMode);
+    if (gameMode === 'practice') {
+      timerDisplayEl.textContent = '';
+    }
+  });
+
   // Mute button
   const muteBtn = document.createElement('button');
   muteBtn.textContent = '♪';
@@ -1252,6 +1296,13 @@ export function createScene() {
       line.material.opacity = 0.3 + Math.sin(elapsed * 2) * 0.15;
     }
 
+    // Timer update
+    if (gameTimer.isRunning && !isSettling) {
+      const remaining = gameTimer.update();
+      timerDisplayEl.textContent = gameTimer.formatTime(remaining);
+      timerDisplayEl.className = remaining < 10 ? 'warning' : '';
+    }
+
     // Settle animation tick
     if (settleController && settleController.isRunning) {
       const result = settleController.update(performance.now());
@@ -1264,6 +1315,45 @@ export function createScene() {
           mesh.position.x = position.x;
           mesh.position.z = position.z;
           mesh.position.y = Math.sin(elapsed * 8 + mesh.position.x) * 0.05;
+        }
+      }
+
+      // Encounter particles: spawn hearts when two residents are close
+      const positions = result.positions;
+      for (let i = 0; i < positions.length; i++) {
+        for (let j = i + 1; j < positions.length; j++) {
+          const a = positions[i].position;
+          const b = positions[j].position;
+          const dist = Math.abs(a.x - b.x) + Math.abs(a.z - b.z);
+          if (dist < 1.5) {
+            // Spawn a heart particle at midpoint (throttle: only every ~2 seconds)
+            if (Math.random() < 0.02) {
+              const heart = new Mesh(
+                new SphereGeometry(0.08, 4, 4),
+                new MeshBasicMaterial({ color: 0xf4a65c, transparent: true, opacity: 0.8 })
+              );
+              heart.position.set(
+                (a.x + b.x) / 2,
+                1.0 + Math.random() * 0.5,
+                (a.z + b.z) / 2
+              );
+              scene.add(heart);
+              // Float up and fade
+              const startY = heart.position.y;
+              const startTime = elapsed;
+              const animateHeart = () => {
+                const age = (performance.now() / 1000 - startTime);
+                if (age > 2) {
+                  scene.remove(heart);
+                  return;
+                }
+                heart.position.y = startY + age * 0.3;
+                heart.material.opacity = 0.8 * (1 - age / 2);
+                requestAnimationFrame(animateHeart);
+              };
+              animateHeart();
+            }
+          }
         }
       }
 
