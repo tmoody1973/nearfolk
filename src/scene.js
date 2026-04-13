@@ -30,6 +30,8 @@ import {
   checkInspirations, INTERACTION_TYPES,
 } from './memory.js';
 import { createJournalUI, updateJournalUI, showJournal } from './journal.js';
+import { getSeason } from './seasons.js';
+import { createMorningWalkController } from './morningwalk.js';
 import {
   shouldShowTutorial, getTutorialPieces, isTutorialSolved,
   createTutorialUI, showTutorialSuccess, removeTutorialUI, markTutorialSeen,
@@ -67,6 +69,18 @@ export function createScene() {
   let memory = loadMemory();
   let currentDay = memory.days + 1;
   const MAX_DAYS = 5;
+
+  // Morning walk state
+  let morningWalkController = null;
+  let inMorningWalk = false;
+
+  // Neighborhood name
+  let neighborhoodName = '';
+  try { neighborhoodName = localStorage.getItem('nearfolk_neighborhood_name') || ''; } catch {}
+
+  // Golden hour state
+  let inGoldenHour = false;
+  let goldenHourStart = 0;
 
   // Timer
   const gameTimer = createTimer(() => {
@@ -1002,7 +1016,8 @@ export function createScene() {
     </style>
     <div id="game-name"><img src="/logo.png" alt="Nearfolk" id="game-logo"></div>
     <div id="score-display">
-      <div id="day-display" style="font-size:0.65rem;opacity:0.5;margin-bottom:2px;">Day 1 of 5</div>
+      <div id="neighborhood-name" style="font-size:0.7rem;font-family:'Lora',serif;opacity:0.6;margin-bottom:2px;cursor:pointer;" title="Click to rename"></div>
+      <div id="day-display" style="font-size:0.6rem;opacity:0.4;margin-bottom:2px;">Day 1 of 5 · Spring</div>
       <div id="score-label">Neighborliness</div>
       <div id="score-value">0</div>
       <div id="timer-display"></div>
@@ -1209,9 +1224,14 @@ export function createScene() {
     }
     scoreEl.textContent = total;
 
-    // Day counter
+    // Day counter + season
     const dayEl = document.getElementById('day-display');
-    if (dayEl) dayEl.textContent = `Day ${currentDay} of ${MAX_DAYS}`;
+    const season = getSeason(currentDay > MAX_DAYS ? MAX_DAYS : currentDay);
+    if (dayEl) dayEl.textContent = `Day ${currentDay} of ${MAX_DAYS} · ${season.name}`;
+
+    // Neighborhood name
+    const nameEl = document.getElementById('neighborhood-name');
+    if (nameEl) nameEl.textContent = neighborhoodName || 'Click to name your neighborhood';
     scoreEl.title = [
       `Eyes: ${breakdown.eyeContactEdges || 0}×3`,
       `Nesting: ${breakdown.nestingBonuses || 0}×2`,
@@ -1349,12 +1369,20 @@ export function createScene() {
     settleController = createSettleController(
       state.pieces, residents, state.grid,
       (directorResult) => {
-        // Settle complete, show story card
+        // Settle complete → golden hour → story card
         stopSettleUnderscore();
-        playEndBell();
         isSettling = false;
         settleProgressEl.classList.add('hidden');
         settleBtnEl.disabled = false;
+
+        // Golden hour pause (3 seconds of silence before score)
+        inGoldenHour = true;
+        goldenHourStart = performance.now();
+
+        // Delay story card by 3 seconds for golden hour
+        setTimeout(() => {
+          playEndBell();
+          inGoldenHour = false;
 
         const { total } = computeScore(state.grid, state.pieces);
 
@@ -1418,7 +1446,8 @@ export function createScene() {
           });
         }
 
-        updateUI();
+          updateUI();
+        }, 3000); // 3-second golden hour delay
       },
       memory
     );
@@ -1470,6 +1499,19 @@ export function createScene() {
           },
         };
       }
+
+      // Start morning walk for the new day
+      if (residents.length > 0) {
+        morningWalkController = createMorningWalkController(
+          state.pieces, residents,
+          (id) => getContentment(memory, id)
+        );
+        if (morningWalkController) {
+          inMorningWalk = true;
+          morningWalkController.start(performance.now());
+        }
+      }
+
       updateUI();
     }
 
@@ -1480,6 +1522,28 @@ export function createScene() {
       showJournal();
     }
   });
+
+  // ─── Neighborhood naming ───
+  document.getElementById('neighborhood-name').addEventListener('click', () => {
+    const name = prompt('Name your neighborhood:', neighborhoodName || '');
+    if (name !== null && name.trim()) {
+      neighborhoodName = name.trim();
+      try { localStorage.setItem('nearfolk_neighborhood_name', neighborhoodName); } catch {}
+      updateUI();
+    }
+  });
+
+  // Prompt for name on first visit if empty
+  if (!neighborhoodName && !inTutorial) {
+    setTimeout(() => {
+      const name = prompt('Welcome to Nearfolk! Name your neighborhood:');
+      if (name && name.trim()) {
+        neighborhoodName = name.trim();
+        try { localStorage.setItem('nearfolk_neighborhood_name', neighborhoodName); } catch {}
+        updateUI();
+      }
+    }, 1000);
+  }
 
   // ─── Journal ───
   createJournalUI();
@@ -1597,6 +1661,39 @@ export function createScene() {
     requestAnimationFrame(animate);
     const elapsed = (performance.now() - startTime) / 1000;
 
+    // Apply season lighting
+    const season = getSeason(currentDay > MAX_DAYS ? MAX_DAYS : currentDay);
+    if (!isSettling) {
+      sky.material.color.setHex(season.skyColor);
+      ambient.intensity = season.ambientIntensity;
+      key.intensity = season.keyIntensity;
+    }
+
+    // Morning walk camera override
+    if (morningWalkController && morningWalkController.isRunning) {
+      const walkResult = morningWalkController.update(performance.now());
+      if (walkResult.cameraTarget && walkResult.isRunning) {
+        // Smooth pan toward the target cottage
+        targetOrbitAngle = Math.atan2(walkResult.cameraTarget.z, walkResult.cameraTarget.x) + Math.PI;
+        targetZoom = 1.8; // Zoom in during morning walk
+      }
+      if (!walkResult.isRunning) {
+        inMorningWalk = false;
+        targetZoom = 1.0; // Reset zoom
+      }
+    }
+
+    // Golden hour: after settle ends, hold gold lighting for 3 seconds
+    if (inGoldenHour) {
+      const ghElapsed = (performance.now() - goldenHourStart) / 1000;
+      ambient.intensity = 0.5;
+      key.intensity = 1.2;
+      sky.material.color.setHex(0xe8c898);
+      if (ghElapsed > 3) {
+        inGoldenHour = false;
+      }
+    }
+
     // Smooth camera update + breathing
     updateCamera();
     camera.position.y += Math.sin(elapsed * 0.3) * 0.1;
@@ -1677,6 +1774,24 @@ export function createScene() {
             label.style.opacity = '0';
             setTimeout(() => label.remove(), 500);
           }, 2500);
+        }
+      }
+
+      // Wave mechanic: brief tilt when residents pass near sightlines
+      for (const { residentId, position } of result.positions) {
+        const mesh = residentMeshMap.get(residentId);
+        if (!mesh) continue;
+        // Check if near any sightline connection
+        for (const conn of connectionLines) {
+          if (!conn.position) continue;
+          const dist = Math.abs(position.x - conn.position.x) + Math.abs(position.z - conn.position.z);
+          if (dist < 2) {
+            // Wave: tilt the resident mesh briefly
+            mesh.rotation.z = Math.sin(elapsed * 6) * 0.15;
+            break;
+          } else {
+            mesh.rotation.z = 0;
+          }
         }
       }
 
