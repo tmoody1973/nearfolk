@@ -94,7 +94,7 @@ export function placePiece(state, type, x, z, rotation) {
     grid: newGrid,
     pieces: [...state.pieces, piece],
     budget: { ...state.budget, [type]: state.budget[type] - 1 },
-    undoStack: [...state.undoStack, state],
+    undoStack: [...state.undoStack, { ...state, undoStack: [], redoStack: [] }],
     redoStack: [],
   };
 }
@@ -119,7 +119,7 @@ export function removePiece(state, pieceId) {
     grid: newGrid,
     pieces: state.pieces.filter(p => p.id !== pieceId),
     budget: { ...state.budget, [piece.type]: state.budget[piece.type] + 1 },
-    undoStack: [...state.undoStack, state],
+    undoStack: [...state.undoStack, { ...state, undoStack: [], redoStack: [] }],
     redoStack: [],
   };
 }
@@ -131,7 +131,7 @@ export function undo(state) {
   return {
     ...prev,
     undoStack: state.undoStack.slice(0, -1),
-    redoStack: [...state.redoStack, state],
+    redoStack: [...state.redoStack, { ...state, undoStack: [], redoStack: [] }],
   };
 }
 
@@ -141,7 +141,7 @@ export function redo(state) {
   const next = state.redoStack[state.redoStack.length - 1];
   return {
     ...next,
-    undoStack: [...state.undoStack, state],
+    undoStack: [...state.undoStack, { ...state, undoStack: [], redoStack: [] }],
     redoStack: state.redoStack.slice(0, -1),
   };
 }
@@ -159,7 +159,7 @@ export function rotatePieceInPlace(state, pieceId) {
     pieces: state.pieces.map(p =>
       p.id === pieceId ? { ...p, rotation: newRotation } : p
     ),
-    undoStack: [...state.undoStack, state],
+    undoStack: [...state.undoStack, { ...state, undoStack: [], redoStack: [] }],
     redoStack: [],
   };
 }

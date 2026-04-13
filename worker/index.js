@@ -13,19 +13,10 @@ const CORS_HEADERS = {
   'Access-Control-Allow-Headers': 'Content-Type',
 };
 
-// Simple HMAC using Web Crypto API
-async function computeHMAC(secret, message) {
-  const encoder = new TextEncoder();
-  const key = await crypto.subtle.importKey(
-    'raw', encoder.encode(secret),
-    { name: 'HMAC', hash: 'SHA-256' },
-    false, ['sign']
-  );
-  const sig = await crypto.subtle.sign('HMAC', key, encoder.encode(message));
-  return Array.from(new Uint8Array(sig))
-    .map(b => b.toString(16).padStart(2, '0'))
-    .join('');
-}
+// Score ceiling: maximum possible score with max budget
+// ~6 cottages x 3 eye-contact each x 3 = 54, plus nodes/paths/nesting
+// Generous cap at 200 to allow for future mechanics
+const MAX_VALID_SCORE = 200;
 
 export default {
   async fetch(request, env) {
@@ -40,30 +31,21 @@ export default {
     if (url.pathname === '/score' && request.method === 'POST') {
       try {
         const body = await request.json();
-        const { playerId, date, score, beatId, hmac } = body;
+        const { playerId, date, score, beatId } = body;
 
         // Validate required fields
-        if (!playerId || !date || score === undefined || !hmac) {
+        if (!playerId || !date || score === undefined) {
           return jsonResponse({ error: 'Missing fields' }, 400);
         }
 
-        // Validate score range (0-500 is generous max)
-        if (typeof score !== 'number' || score < 0 || score > 500) {
+        // Validate score range with server-side ceiling
+        if (typeof score !== 'number' || score < 0 || score > MAX_VALID_SCORE) {
           return jsonResponse({ error: 'Invalid score' }, 400);
         }
 
         // Validate date format
         if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
           return jsonResponse({ error: 'Invalid date' }, 400);
-        }
-
-        // Verify HMAC
-        const secret = env.HMAC_SECRET || 'nearfolk-dev-secret';
-        const message = `${playerId}:${date}:${score}`;
-        const expected = await computeHMAC(secret, message);
-
-        if (hmac !== expected) {
-          return jsonResponse({ error: 'Invalid signature' }, 403);
         }
 
         // Check one submission per IP per day

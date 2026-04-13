@@ -54,6 +54,7 @@ export function createScene() {
   // Settle state
   let settleController = null;
   let isSettling = false;
+  const heartParticles = [];
 
   // Timer
   const gameTimer = createTimer(() => {
@@ -548,10 +549,10 @@ export function createScene() {
               // Clear tutorial pieces and start real game
               inTutorial = false;
               syncStateToScene(createInitialState());
-              // Re-mark commons
-              for (let dx = 0; dx < 3; dx++) {
-                for (let dz = 0; dz < 3; dz++) {
-                  state.grid[3 + dx][3 + dz] = 'COMMONS';
+              // Re-mark commons from seed
+              for (let dx = 0; dx < currentSeed.commonsW; dx++) {
+                for (let dz = 0; dz < currentSeed.commonsH; dz++) {
+                  state.grid[currentSeed.commonsX + dx][currentSeed.commonsZ + dz] = 'COMMONS';
                 }
               }
               updateUI();
@@ -1295,9 +1296,11 @@ export function createScene() {
     // Space: place piece (keyboard nav)
     if (e.key === ' ' && keyboardActive) {
       e.preventDefault();
+      if (isSettling) return;
       if (hoverCell.x < 0) return;
       if (!canPlace(state, state.selectedType, hoverCell.x, hoverCell.z)) return;
 
+      playPlace();
       const type = state.selectedType;
       const rotation = state.rotation;
       const x = hoverCell.x;
@@ -1312,6 +1315,11 @@ export function createScene() {
       mesh.position.set(x - halfGrid + size.w / 2, 0, z - halfGrid + size.h / 2);
       scene.add(mesh);
       meshMap.set(placed.id, mesh);
+
+      // Spawn resident if cottage
+      if (type === 'COTTAGE') {
+        spawnResident(placed.id, x, z, rotation);
+      }
 
       updatePreview();
       updateUI();
@@ -1376,35 +1384,31 @@ export function createScene() {
           const a = positions[i].position;
           const b = positions[j].position;
           const dist = Math.abs(a.x - b.x) + Math.abs(a.z - b.z);
-          if (dist < 1.5) {
-            // Spawn a heart particle at midpoint (throttle: only every ~2 seconds)
-            if (Math.random() < 0.02) {
-              const heart = new Mesh(
-                new SphereGeometry(0.08, 4, 4),
-                new MeshBasicMaterial({ color: 0xf4a65c, transparent: true, opacity: 0.8 })
-              );
-              heart.position.set(
-                (a.x + b.x) / 2,
-                1.0 + Math.random() * 0.5,
-                (a.z + b.z) / 2
-              );
-              scene.add(heart);
-              // Float up and fade
-              const startY = heart.position.y;
-              const startTime = elapsed;
-              const animateHeart = () => {
-                const age = (performance.now() / 1000 - startTime);
-                if (age > 2) {
-                  scene.remove(heart);
-                  return;
-                }
-                heart.position.y = startY + age * 0.3;
-                heart.material.opacity = 0.8 * (1 - age / 2);
-                requestAnimationFrame(animateHeart);
-              };
-              animateHeart();
-            }
+          if (dist < 1.5 && Math.random() < 0.02) {
+            const heart = new Mesh(
+              new SphereGeometry(0.08, 4, 4),
+              new MeshBasicMaterial({ color: 0xf4a65c, transparent: true, opacity: 0.8 })
+            );
+            const startY = 1.0 + Math.random() * 0.5;
+            heart.position.set((a.x + b.x) / 2, startY, (a.z + b.z) / 2);
+            scene.add(heart);
+            heartParticles.push({ mesh: heart, startY, birthTime: elapsed });
           }
+        }
+      }
+
+      // Update existing heart particles (float up, fade, dispose)
+      for (let i = heartParticles.length - 1; i >= 0; i--) {
+        const h = heartParticles[i];
+        const age = elapsed - h.birthTime;
+        if (age > 2) {
+          scene.remove(h.mesh);
+          h.mesh.geometry.dispose();
+          h.mesh.material.dispose();
+          heartParticles.splice(i, 1);
+        } else {
+          h.mesh.position.y = h.startY + age * 0.3;
+          h.mesh.material.opacity = 0.8 * (1 - age / 2);
         }
       }
 
