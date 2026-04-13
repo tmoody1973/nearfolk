@@ -655,10 +655,14 @@ export function createScene() {
       }
       #score-display {
         position: absolute;
-        top: 16px; right: 20px;
+        top: 12px; right: 16px;
         text-align: right;
+        border: 6px solid transparent;
+        border-image: url('/ui/panel_brown_corners_a.png') 12 fill stretch;
+        padding: 8px 14px;
+        image-rendering: pixelated;
       }
-      #score-label { font-size: 0.75rem; opacity: 0.6; }
+      #score-label { font-size: 0.7rem; opacity: 0.6; text-transform: uppercase; letter-spacing: 0.05em; }
       #score-value {
         font-family: 'Lora', serif;
         font-size: 2.5rem;
@@ -668,34 +672,43 @@ export function createScene() {
       #piece-palette {
         position: absolute;
         top: 50%;
-        left: 16px;
+        left: 12px;
         transform: translateY(-50%);
-        background: rgba(240, 228, 208, 0.85);
-        border-radius: 12px;
-        padding: 8px;
+        border: 6px solid transparent;
+        border-image: url('/ui/panel_brown_corners_a.png') 12 fill stretch;
+        padding: 6px;
         pointer-events: auto;
         display: flex;
         flex-direction: column;
-        gap: 4px;
+        gap: 2px;
+        image-rendering: pixelated;
       }
       .palette-item {
         display: flex;
         align-items: center;
         gap: 8px;
-        padding: 6px 10px;
-        border-radius: 8px;
+        padding: 5px 8px;
+        border-radius: 4px;
         cursor: pointer;
-        font-size: 0.85rem;
+        font-size: 0.8rem;
         font-weight: 600;
         transition: background 0.15s;
         user-select: none;
       }
-      .palette-item:hover { background: rgba(139, 107, 74, 0.1); }
-      .palette-item.selected { background: rgba(139, 107, 74, 0.2); }
-      .palette-item.exhausted { opacity: 0.3; pointer-events: none; }
+      .palette-item:hover { background: rgba(139, 107, 74, 0.15); }
+      .palette-item.selected {
+        background: rgba(139, 107, 74, 0.25);
+        border: 2px solid transparent;
+        border-image: url('/ui/button_brown.png') 8 fill stretch;
+        image-rendering: pixelated;
+      }
+      .palette-item.exhausted { opacity: 0.25; pointer-events: none; }
       #piece-palette.morphed {
         transition: all 0.6s ease;
         padding: 0;
+        border-image: none;
+        border: none;
+        background: none;
       }
       .palette-morph-settle {
         padding: 20px 16px;
@@ -704,29 +717,36 @@ export function createScene() {
         font-size: 1.2rem;
         font-weight: 700;
         color: #f5efe6;
-        background: rgba(201, 122, 92, 0.9);
-        border-radius: 12px;
+        border: 6px solid transparent;
+        border-image: url('/ui/button_red.png') 8 fill stretch;
+        image-rendering: pixelated;
         cursor: pointer;
         animation: settlePulse 2s ease-in-out infinite;
         user-select: none;
+        background: none;
       }
-      .palette-morph-settle:hover { background: rgba(201, 122, 92, 1); }
+      .palette-morph-settle:hover { filter: brightness(1.1); }
       .palette-count {
         margin-left: auto;
-        font-size: 0.75rem;
-        opacity: 0.6;
+        font-size: 0.7rem;
+        opacity: 0.5;
       }
       .palette-icon {
-        width: 20px; height: 20px;
-        border-radius: 4px;
+        width: 18px; height: 18px;
+        border-radius: 3px;
       }
       #controls-hint {
         position: absolute;
-        bottom: 16px;
+        bottom: 12px;
         left: 50%;
         transform: translateX(-50%);
-        font-size: 0.7rem;
-        opacity: 0.4;
+        font-size: 0.65rem;
+        opacity: 0.5;
+        border: 3px solid transparent;
+        border-image: url('/ui/panel_brown.png') 8 fill stretch;
+        image-rendering: pixelated;
+        padding: 4px 12px;
+        white-space: nowrap;
       }
       #mobile-controls {
         position: absolute;
@@ -739,9 +759,10 @@ export function createScene() {
       .mobile-btn {
         width: 44px;
         height: 44px;
-        border-radius: 8px;
-        border: none;
-        background: rgba(240, 228, 208, 0.85);
+        border: 4px solid transparent;
+        border-image: url('/ui/button_brown.png') 8 fill stretch;
+        image-rendering: pixelated;
+        background: none;
         color: #6b4e3a;
         font-size: 1.1rem;
         font-weight: 700;
@@ -753,7 +774,7 @@ export function createScene() {
         user-select: none;
         -webkit-tap-highlight-color: transparent;
       }
-      .mobile-btn:active { background: rgba(139, 107, 74, 0.3); }
+      .mobile-btn:active { filter: brightness(0.9); }
       #timer-display {
         font-family: 'Nunito', sans-serif;
         font-size: 1rem;
@@ -772,20 +793,21 @@ export function createScene() {
         bottom: 80px;
         left: 50%;
         transform: translateX(-50%);
-        background: rgba(201, 122, 92, 0.9);
         color: #f5efe6;
-        border: none;
-        border-radius: 12px;
-        padding: 12px 32px;
+        border: 6px solid transparent;
+        border-image: url('/ui/button_brown.png') 8 fill stretch;
+        image-rendering: pixelated;
+        background: none;
+        padding: 10px 28px;
         font-family: 'Lora', serif;
         font-size: 1.1rem;
         font-weight: 700;
         cursor: pointer;
         pointer-events: auto;
-        transition: background 0.2s, transform 0.15s;
+        transition: transform 0.15s, filter 0.15s;
         display: none;
       }
-      #settle-btn:hover { background: rgba(201, 122, 92, 1); transform: translateX(-50%) scale(1.05); }
+      #settle-btn:hover { transform: translateX(-50%) scale(1.05); filter: brightness(1.1); }
       #settle-btn.visible { display: block; }
       #settle-btn.pulse {
         animation: settlePulse 2s ease-in-out infinite;
@@ -800,13 +822,14 @@ export function createScene() {
         top: 50%;
         left: 50%;
         transform: translate(-50%, -50%);
-        background: rgba(240, 228, 208, 0.95);
-        border-radius: 16px;
-        padding: 32px 40px;
+        border: 8px solid transparent;
+        border-image: url('/ui/panel_brown_corners_a.png') 12 fill stretch;
+        image-rendering: pixelated;
+        padding: 28px 36px;
         max-width: 420px;
         text-align: center;
         pointer-events: auto;
-        box-shadow: 0 8px 32px rgba(107, 78, 58, 0.25);
+        background: none;
       }
       #story-card.hidden { display: none; }
       #story-beat-name {
@@ -832,48 +855,48 @@ export function createScene() {
         margin-bottom: 16px;
       }
       #story-close, #story-share {
-        background: rgba(139, 107, 74, 0.15);
-        border: none;
-        border-radius: 8px;
-        padding: 8px 24px;
+        border: 4px solid transparent;
+        border-image: url('/ui/button_brown.png') 8 fill stretch;
+        image-rendering: pixelated;
+        background: none;
+        padding: 6px 20px;
         font-family: 'Nunito', sans-serif;
         font-size: 0.85rem;
         font-weight: 600;
         color: #6b4e3a;
         cursor: pointer;
       }
-      #story-close:hover, #story-share:hover { background: rgba(139, 107, 74, 0.25); }
-      #story-share { background: rgba(201, 122, 92, 0.2); }
+      #story-close:hover, #story-share:hover { filter: brightness(1.1); }
       #settle-progress {
         position: absolute;
         bottom: 60px;
         left: 50%;
         transform: translateX(-50%);
-        width: 200px;
-        height: 4px;
-        background: rgba(139, 107, 74, 0.15);
-        border-radius: 2px;
+        width: 220px;
+        height: 14px;
+        border: 4px solid transparent;
+        border-image: url('/ui/scrollbar_brown.png') 4 fill stretch;
+        image-rendering: pixelated;
         overflow: hidden;
       }
       #settle-progress.hidden { display: none; }
       #settle-bar {
         height: 100%;
-        background: rgba(201, 122, 92, 0.8);
-        border-radius: 2px;
+        background: #c97a5c;
         width: 0%;
         transition: width 0.1s linear;
       }
       #resident-tooltip {
         position: absolute;
         pointer-events: none;
-        background: rgba(240, 228, 208, 0.92);
-        border-radius: 8px;
+        border: 5px solid transparent;
+        border-image: url('/ui/panel_brown.png') 8 fill stretch;
+        image-rendering: pixelated;
         padding: 6px 10px;
         font-size: 0.8rem;
         font-weight: 600;
         white-space: nowrap;
         display: none;
-        box-shadow: 0 2px 8px rgba(107, 78, 58, 0.15);
       }
       .tooltip-name { font-family: 'Lora', serif; font-size: 0.9rem; }
       .tooltip-trait { opacity: 0.7; font-size: 0.7rem; margin-top: 2px; }
