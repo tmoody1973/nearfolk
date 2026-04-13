@@ -368,14 +368,21 @@ export function createScene() {
       highlight.position.set(cell.x - halfGrid + 0.5, 0.02, cell.z - halfGrid + 0.5);
       highlight.visible = true;
 
-      // Show resident tooltip if hovering a cottage
+      // Show tooltip: resident info for cottages, "right-click to remove" for any piece
       const pieceId = state.grid[cell.x][cell.z];
+      const isOccupied = pieceId !== null && pieceId !== 'COMMONS';
       const resident = pieceId ? residents.find(r => r.cottageId === pieceId) : null;
-      if (resident && tooltipEl) {
-        tooltipEl.innerHTML = `
-          <div class="tooltip-name">${resident.trait.icon} ${resident.name}</div>
-          <div class="tooltip-trait">${resident.trait.name}: ${resident.trait.description}</div>
-        `;
+      if (isOccupied && tooltipEl) {
+        let html = '';
+        if (resident) {
+          html += `<div class="tooltip-name">${resident.trait.icon} ${resident.name}</div>`;
+          html += `<div class="tooltip-trait">${resident.trait.name}: ${resident.trait.description}</div>`;
+        } else {
+          const piece = state.pieces.find(p => p.id === pieceId);
+          if (piece) html += `<div class="tooltip-name">${piece.type.charAt(0) + piece.type.slice(1).toLowerCase()}</div>`;
+        }
+        html += `<div class="tooltip-action">Right-click to remove · T to rotate</div>`;
+        tooltipEl.innerHTML = html;
         tooltipEl.style.display = 'block';
         tooltipEl.style.left = (e.clientX + 16) + 'px';
         tooltipEl.style.top = (e.clientY - 10) + 'px';
@@ -783,10 +790,13 @@ export function createScene() {
         margin-top: 4px;
       }
       #timer-display.warning { color: #c97a5c; }
-      #mode-toggle {
+      #top-toolbar {
         position: absolute;
-        top: 12px; left: 162px;
+        top: 72px; left: 12px;
+        display: flex;
+        gap: 6px;
         pointer-events: auto;
+        align-items: center;
       }
       #settle-btn {
         position: absolute;
@@ -900,6 +910,7 @@ export function createScene() {
       }
       .tooltip-name { font-family: 'Lora', serif; font-size: 0.9rem; }
       .tooltip-trait { opacity: 0.7; font-size: 0.7rem; margin-top: 2px; }
+      .tooltip-action { opacity: 0.45; font-size: 0.6rem; margin-top: 4px; font-style: italic; }
       @media (min-width: 769px) {
         #mobile-controls { display: none; }
       }
@@ -910,9 +921,7 @@ export function createScene() {
       <div id="score-value">0</div>
       <div id="timer-display"></div>
     </div>
-    <div id="mode-toggle">
-      <button id="mode-btn" class="mobile-btn" style="width:auto;padding:4px 12px;font-size:0.7rem;border-radius:6px;pointer-events:auto;">Practice</button>
-    </div>
+    <div id="top-toolbar"></div>
     <div id="piece-palette"></div>
     <div id="mobile-controls">
       <button class="mobile-btn" id="btn-rotate" title="Rotate">R</button>
@@ -1129,10 +1138,14 @@ export function createScene() {
   const helpBtn = document.createElement('button');
   helpBtn.textContent = '?';
   helpBtn.className = 'mobile-btn';
-  helpBtn.style.cssText = 'position:absolute;top:12px;left:80px;pointer-events:auto;width:32px;height:32px;font-size:0.9rem;';
-  document.getElementById('game-ui').appendChild(helpBtn);
+  helpBtn.style.cssText = 'pointer-events:auto;width:32px;height:32px;font-size:0.9rem;';
+  document.getElementById('top-toolbar').appendChild(helpBtn);
   // ─── Mode toggle (ranked/practice) ───
-  const modeBtnEl = document.getElementById('mode-btn');
+  const modeBtnEl = document.createElement('button');
+  modeBtnEl.className = 'mobile-btn';
+  modeBtnEl.style.cssText = 'width:auto;padding:4px 12px;font-size:0.65rem;pointer-events:auto;';
+  modeBtnEl.textContent = 'Practice';
+  document.getElementById('top-toolbar').appendChild(modeBtnEl);
   const timerDisplayEl = document.getElementById('timer-display');
   let gameMode = 'practice';
 
@@ -1150,8 +1163,8 @@ export function createScene() {
   const muteBtn = document.createElement('button');
   muteBtn.textContent = '♪';
   muteBtn.className = 'mobile-btn';
-  muteBtn.style.cssText = 'position:absolute;top:12px;left:120px;pointer-events:auto;width:32px;height:32px;font-size:0.9rem;';
-  document.getElementById('game-ui').appendChild(muteBtn);
+  muteBtn.style.cssText = 'pointer-events:auto;width:32px;height:32px;font-size:0.9rem;';
+  document.getElementById('top-toolbar').appendChild(muteBtn);
   muteBtn.addEventListener('click', (e) => {
     e.stopPropagation();
     const muted = toggleMute();
