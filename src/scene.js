@@ -32,6 +32,8 @@ import {
   startSettleUnderscore, stopSettleUnderscore, playEndBell,
   toggleMute, getIsMuted,
 } from './audio.js';
+import { captureShareCard, generatePostcard, sharePostcard } from './share.js';
+import { todayUTC } from './seed.js';
 
 export function createScene() {
   // ─── State ───
@@ -775,7 +777,7 @@ export function createScene() {
         font-weight: 700;
         margin-bottom: 16px;
       }
-      #story-close {
+      #story-close, #story-share {
         background: rgba(139, 107, 74, 0.15);
         border: none;
         border-radius: 8px;
@@ -786,7 +788,8 @@ export function createScene() {
         color: #6b4e3a;
         cursor: pointer;
       }
-      #story-close:hover { background: rgba(139, 107, 74, 0.25); }
+      #story-close:hover, #story-share:hover { background: rgba(139, 107, 74, 0.25); }
+      #story-share { background: rgba(201, 122, 92, 0.2); }
       #settle-progress {
         position: absolute;
         bottom: 60px;
@@ -842,7 +845,10 @@ export function createScene() {
       <div id="story-beat-name"></div>
       <div id="story-caption"></div>
       <div id="story-score"></div>
-      <button id="story-close">Continue</button>
+      <div style="display:flex;gap:8px;justify-content:center">
+        <button id="story-share">Share postcard</button>
+        <button id="story-close">Continue</button>
+      </div>
     </div>
     <div id="settle-progress" class="hidden">
       <div id="settle-bar"></div>
@@ -1091,12 +1097,42 @@ export function createScene() {
         document.getElementById('story-score').textContent = total;
         storyCardEl.classList.remove('hidden');
 
+        // Store for share card
+        lastStoryData = {
+          beatName: directorResult.beat.name,
+          caption: directorResult.caption,
+          score: total,
+          date: todayUTC(),
+        };
+
         updateUI();
       }
     );
 
     startSettleUnderscore();
     settleController.start(performance.now());
+  });
+
+  let lastStoryData = null;
+
+  document.getElementById('story-share').addEventListener('click', async () => {
+    if (!lastStoryData) return;
+    const btn = document.getElementById('story-share');
+    btn.textContent = 'Capturing...';
+    try {
+      const sceneCapture = captureShareCard(scene, camera);
+      const postcard = await generatePostcard(
+        sceneCapture,
+        lastStoryData.beatName,
+        lastStoryData.caption,
+        lastStoryData.score,
+        lastStoryData.date
+      );
+      await sharePostcard(postcard, `${lastStoryData.caption} — Nearfolk, ${lastStoryData.date}`);
+    } catch (e) {
+      console.error('Share failed:', e);
+    }
+    btn.textContent = 'Share postcard';
   });
 
   document.getElementById('story-close').addEventListener('click', () => {
