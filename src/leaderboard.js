@@ -5,7 +5,7 @@
 // Falls back gracefully on network failure.
 
 // Worker URL — update this after deploying
-const WORKER_URL = 'https://nearfolk-leaderboard.workers.dev';
+const WORKER_URL = 'https://nearfolk-leaderboard.tarikjmoody.workers.dev';
 
 // Simple HMAC using Web Crypto API (matches worker)
 async function computeHMAC(secret, message) {
@@ -39,7 +39,7 @@ export async function submitScore(date, score, beatId) {
   const playerId = getPlayerId();
   const message = `${playerId}:${date}:${score}`;
   // In production, this secret would be embedded at build time
-  const secret = 'nearfolk-dev-secret';
+  const secret = 'nearfolk-prod-2026-vibejam';
   const hmac = await computeHMAC(secret, message);
 
   try {
