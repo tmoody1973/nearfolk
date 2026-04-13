@@ -32,6 +32,8 @@ import {
 import { createJournalUI, updateJournalUI, showJournal } from './journal.js';
 import { getSeason } from './seasons.js';
 import { createMorningWalkController } from './morningwalk.js';
+import { checkNewUnlocks } from './milestones.js';
+import { createDraft, drawChoices, pickChoice, isDraftEmpty } from './draft.js';
 import {
   shouldShowTutorial, getTutorialPieces, isTutorialSolved,
   createTutorialUI, showTutorialSuccess, removeTutorialUI, markTutorialSeen,
@@ -81,6 +83,13 @@ export function createScene() {
   // Golden hour state
   let inGoldenHour = false;
   let goldenHourStart = 0;
+
+  // Draft state
+  let draft = createDraft(state.budget);
+  draft = drawChoices(draft);
+
+  // Struggling state: residents with contentment < 20
+  const strugglingResidents = new Set();
 
   // Timer
   const gameTimer = createTimer(() => {
@@ -1410,13 +1419,42 @@ export function createScene() {
           caption: directorResult.caption,
         }, total, residents.length);
 
+        // Check struggling state
+        strugglingResidents.clear();
+        for (const r of residents) {
+          if (getContentment(memory, r.id) < 20) {
+            strugglingResidents.add(r.id);
+          }
+        }
+
+        // Check milestone unlocks
+        const newUnlocks = checkNewUnlocks(total);
+        if (newUnlocks.length > 0) {
+          for (const unlock of newUnlocks) {
+            showFloatingDelta(0, 0, 0); // Visual notification
+            // Add unlocked piece to future budgets
+            state = {
+              ...state,
+              budget: {
+                ...state.budget,
+                [unlock.piece]: (state.budget[unlock.piece] || 0) + 2,
+              },
+            };
+          }
+        }
+
         saveMemory(memory);
         updateJournalUI(memory.journal);
         currentDay = memory.days + 1;
 
-        // Show day number on story card
+        // Refresh draft for next day
+        draft = createDraft(state.budget);
+        draft = drawChoices(draft);
+
+        // Show day number + season on story card
+        const storyseason = getSeason(memory.days > MAX_DAYS ? MAX_DAYS : memory.days);
         document.getElementById('story-beat-name').textContent =
-          `Day ${memory.days} · ${directorResult.beat.name}`;
+          `Day ${memory.days} · ${storyseason.name} · ${directorResult.beat.name}`;
 
         // Store for share card
         lastStoryData = {
@@ -1843,10 +1881,23 @@ export function createScene() {
         const contentment = resident ? getContentment(memory, resident.id) : 50;
         const bobSpeed = contentment > 70 ? 3 : contentment > 30 ? 2 : 1;
         const bobHeight = contentment > 70 ? 0.05 : contentment > 30 ? 0.03 : 0.015;
-        // Hunched when low contentment
         const scaleY = contentment > 30 ? 1 : 0.85;
         mesh.scale.y = scaleY;
         mesh.position.y = Math.sin(elapsed * bobSpeed + mesh.position.x * 3) * bobHeight;
+      }
+
+      // Struggling cottages: dim their materials
+      for (const [pieceId, mesh] of meshMap) {
+        const resident = residents.find(r => r.cottageId === pieceId);
+        if (resident && strugglingResidents.has(resident.id)) {
+          // Desaturate: reduce brightness
+          mesh.traverse(child => {
+            if (child.isMesh && child.material && !child.material._dimmed) {
+              child.material.color.multiplyScalar(0.6);
+              child.material._dimmed = true;
+            }
+          });
+        }
       }
     }
 
