@@ -227,10 +227,12 @@ export function createScene() {
     }
 
     if (hoverCell.x < 0) return;
-    if (!canPlace(state, state.selectedType, hoverCell.x, hoverCell.z)) return;
+    if (isSettling) return;
 
     const factory = PIECE_FACTORIES[state.selectedType];
     if (!factory) return;
+
+    const valid = canPlace(state, state.selectedType, hoverCell.x, hoverCell.z);
 
     previewMesh = factory();
     previewMesh.rotation.y = (state.rotation * Math.PI) / 180;
@@ -242,12 +244,15 @@ export function createScene() {
       hoverCell.z - halfGrid + size.h / 2
     );
 
-    // Ghost transparency
+    // Ghost transparency: green-tinted if valid, red-tinted if not
     previewMesh.traverse(child => {
       if (child.isMesh && child.material) {
         child.material = child.material.clone();
         child.material.transparent = true;
-        child.material.opacity = 0.4;
+        child.material.opacity = valid ? 0.4 : 0.15;
+        if (!valid) {
+          child.material.color.setHex(0xcc6666);
+        }
       }
     });
     scene.add(previewMesh);
