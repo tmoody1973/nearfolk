@@ -316,9 +316,12 @@ export function createScene() {
   });
 
   // ─── Mouse events ───
-  const tooltipEl = document.getElementById('resident-tooltip');
+  // tooltipEl is resolved lazily because the UI DOM is created later
+  let tooltipEl = null;
 
   window.addEventListener('mousemove', (e) => {
+    if (!tooltipEl) tooltipEl = document.getElementById('resident-tooltip');
+
     const cell = cellFromMouse(e);
     if (cell) {
       hoverCell.x = cell.x;
@@ -329,7 +332,7 @@ export function createScene() {
       // Show resident tooltip if hovering a cottage
       const pieceId = state.grid[cell.x][cell.z];
       const resident = pieceId ? residents.find(r => r.cottageId === pieceId) : null;
-      if (resident) {
+      if (resident && tooltipEl) {
         tooltipEl.innerHTML = `
           <div class="tooltip-name">${resident.trait.icon} ${resident.name}</div>
           <div class="tooltip-trait">${resident.trait.name}: ${resident.trait.description}</div>
@@ -337,14 +340,14 @@ export function createScene() {
         tooltipEl.style.display = 'block';
         tooltipEl.style.left = (e.clientX + 16) + 'px';
         tooltipEl.style.top = (e.clientY - 10) + 'px';
-      } else {
+      } else if (tooltipEl) {
         tooltipEl.style.display = 'none';
       }
     } else {
       hoverCell.x = -1;
       hoverCell.z = -1;
       highlight.visible = false;
-      tooltipEl.style.display = 'none';
+      if (tooltipEl) tooltipEl.style.display = 'none';
     }
     updatePreview();
   });
