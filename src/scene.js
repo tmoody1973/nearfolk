@@ -23,6 +23,15 @@ import { PIECE_FACTORIES } from './pieces/index.js';
 import { computeScore } from './scoring.js';
 import { createResident, resetResidentPool } from './residents.js';
 import { createSettleController } from './settle.js';
+import {
+  shouldShowTutorial, getTutorialPieces, isTutorialSolved,
+  createTutorialUI, showTutorialSuccess, removeTutorialUI, markTutorialSeen,
+} from './tutorial.js';
+import {
+  initAudio, playPlace, playRemove, playRotate, playScoreTick,
+  startSettleUnderscore, stopSettleUnderscore, playEndBell,
+  toggleMute, getIsMuted,
+} from './audio.js';
 
 export function createScene() {
   // ─── State ───
@@ -38,6 +47,9 @@ export function createScene() {
   // Settle state
   let settleController = null;
   let isSettling = false;
+
+  // Tutorial state
+  let inTutorial = shouldShowTutorial();
 
   const scene = new Scene();
   scene.background = new Color(0xf5efe6);
@@ -411,10 +423,12 @@ export function createScene() {
   // Left-click: place piece
   window.addEventListener('click', (e) => {
     if (e.button !== 0) return;
+    initAudio(); // First interaction starts audio
     if (isSettling) return; // Grid locked during settle
     if (hoverCell.x < 0) return;
     if (!canPlace(state, state.selectedType, hoverCell.x, hoverCell.z)) return;
 
+    playPlace();
     const type = state.selectedType;
     const rotation = state.rotation;
     const x = hoverCell.x;
@@ -443,6 +457,7 @@ export function createScene() {
   // Right-click: remove piece under cursor
   window.addEventListener('contextmenu', (e) => {
     e.preventDefault();
+    if (isSettling) return;
     if (hoverCell.x < 0) return;
 
     const pieceId = state.grid[hoverCell.x][hoverCell.z];
@@ -460,6 +475,7 @@ export function createScene() {
       meshMap.delete(pieceId);
     }
     state = removePiece(state, pieceId);
+    playRemove();
     updatePreview();
     updateUI();
   });
@@ -468,6 +484,7 @@ export function createScene() {
   window.addEventListener('keydown', (e) => {
     // R: rotate selected piece type (for next placement)
     if (e.key === 'r' || e.key === 'R') {
+      playRotate();
       const idx = ROTATIONS.indexOf(state.rotation);
       state = { ...state, rotation: ROTATIONS[(idx + 1) % ROTATIONS.length] };
       updatePreview();
@@ -487,14 +504,44 @@ export function createScene() {
     if (e.key === 't' || e.key === 'T') {
       if (hoverCell.x >= 0) {
         const pieceId = state.grid[hoverCell.x][hoverCell.z];
-        if (pieceId !== null) {
+        if (pieceId !== null && pieceId !== 'COMMONS') {
+          playRotate();
           state = rotatePieceInPlace(state, pieceId);
           const piece = state.pieces.find(p => p.id === pieceId);
           const mesh = meshMap.get(pieceId);
           if (mesh && piece) {
             mesh.rotation.y = (piece.rotation * Math.PI) / 180;
+            // Update resident position to match new porch direction
+            const resident = residents.find(r => r.cottageId === pieceId);
+            if (resident) {
+              const rMesh = residentMeshMap.get(resident.id);
+              if (rMesh) {
+                const size = PIECE_SIZES.COTTAGE;
+                const cx = piece.x - halfGrid + size.w / 2;
+                const cz = piece.z - halfGrid + size.h / 2;
+                const dir = { 0: { dx: 0, dz: 1.3 }, 90: { dx: 1.3, dz: 0 }, 180: { dx: 0, dz: -1.3 }, 270: { dx: -1.3, dz: 0 } };
+                const offset = dir[piece.rotation] || dir[0];
+                rMesh.position.set(cx + offset.dx, 0, cz + offset.dz);
+              }
+            }
           }
           updateUI();
+
+          // Check tutorial completion
+          if (inTutorial && isTutorialSolved(state.pieces)) {
+            showTutorialSuccess(() => {
+              // Clear tutorial pieces and start real game
+              inTutorial = false;
+              syncStateToScene(createInitialState());
+              // Re-mark commons
+              for (let dx = 0; dx < 3; dx++) {
+                for (let dz = 0; dz < 3; dz++) {
+                  state.grid[3 + dx][3 + dz] = 'COMMONS';
+                }
+              }
+              updateUI();
+            });
+          }
         }
       }
     }
@@ -891,6 +938,10 @@ export function createScene() {
     // Live score + visual connections
     const scoreResult = computeScore(state.grid, state.pieces);
     const { total, breakdown, connections, lonelyCottages } = scoreResult;
+    const prevScore = parseInt(scoreEl.textContent) || 0;
+    if (total !== prevScore && total > prevScore) {
+      playScoreTick(total);
+    }
     scoreEl.textContent = total;
     scoreEl.title = [
       `Eyes: ${breakdown.eyeContactEdges || 0}×3`,
@@ -924,6 +975,88 @@ export function createScene() {
 
   updateUI();
 
+  // ─── Tutorial ───
+  if (inTutorial) {
+    createTutorialUI();
+    const tutorialPieces = getTutorialPieces();
+
+    // Place tutorial cottages
+    for (const tp of tutorialPieces) {
+      // Mark grid
+      const size = PIECE_SIZES[tp.type];
+      for (let dx = 0; dx < size.w; dx++) {
+        for (let dz = 0; dz < size.h; dz++) {
+          state.grid[tp.x + dx][tp.z + dz] = tp.id;
+        }
+      }
+      state.pieces = [...state.pieces, tp];
+
+      // Create mesh
+      const mesh = PIECE_FACTORIES[tp.type]();
+      mesh.rotation.y = (tp.rotation * Math.PI) / 180;
+      mesh.position.set(
+        tp.x - halfGrid + size.w / 2, 0,
+        tp.z - halfGrid + size.h / 2
+      );
+      scene.add(mesh);
+      meshMap.set(tp.id, mesh);
+
+      // Spawn resident
+      spawnResident(tp.id, tp.x, tp.z, tp.rotation);
+    }
+    updateUI();
+  }
+
+  // ? button to replay tutorial
+  const helpBtn = document.createElement('button');
+  helpBtn.textContent = '?';
+  helpBtn.className = 'mobile-btn';
+  helpBtn.style.cssText = 'position:absolute;top:16px;right:80px;pointer-events:auto;width:32px;height:32px;font-size:0.9rem;border-radius:50%;';
+  document.getElementById('game-ui').appendChild(helpBtn);
+  // Mute button
+  const muteBtn = document.createElement('button');
+  muteBtn.textContent = '♪';
+  muteBtn.className = 'mobile-btn';
+  muteBtn.style.cssText = 'position:absolute;top:16px;right:120px;pointer-events:auto;width:32px;height:32px;font-size:0.9rem;border-radius:50%;';
+  document.getElementById('game-ui').appendChild(muteBtn);
+  muteBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const muted = toggleMute();
+    muteBtn.textContent = muted ? '✕' : '♪';
+    muteBtn.style.opacity = muted ? '0.4' : '1';
+  });
+
+  helpBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    // Reset and show tutorial
+    inTutorial = true;
+    syncStateToScene(createInitialState());
+    // Re-mark commons
+    for (let dx = 0; dx < 3; dx++) {
+      for (let dz = 0; dz < 3; dz++) {
+        state.grid[3 + dx][3 + dz] = 'COMMONS';
+      }
+    }
+    createTutorialUI();
+    const tutorialPieces = getTutorialPieces();
+    for (const tp of tutorialPieces) {
+      const size = PIECE_SIZES[tp.type];
+      for (let dx = 0; dx < size.w; dx++) {
+        for (let dz = 0; dz < size.h; dz++) {
+          state.grid[tp.x + dx][tp.z + dz] = tp.id;
+        }
+      }
+      state.pieces = [...state.pieces, tp];
+      const mesh = PIECE_FACTORIES[tp.type]();
+      mesh.rotation.y = (tp.rotation * Math.PI) / 180;
+      mesh.position.set(tp.x - halfGrid + size.w / 2, 0, tp.z - halfGrid + size.h / 2);
+      scene.add(mesh);
+      meshMap.set(tp.id, mesh);
+      spawnResident(tp.id, tp.x, tp.z, tp.rotation);
+    }
+    updateUI();
+  });
+
   // ─── Settle button ───
   const settleBtnEl = document.getElementById('settle-btn');
   const storyCardEl = document.getElementById('story-card');
@@ -945,6 +1078,8 @@ export function createScene() {
       state.pieces, residents, state.grid,
       (directorResult) => {
         // Settle complete, show story card
+        stopSettleUnderscore();
+        playEndBell();
         isSettling = false;
         settleProgressEl.classList.add('hidden');
         settleBtnEl.disabled = false;
@@ -960,6 +1095,7 @@ export function createScene() {
       }
     );
 
+    startSettleUnderscore();
     settleController.start(performance.now());
   });
 
